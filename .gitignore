@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Database（如果数据库是运行时生成的）
+*.db
+*.sqlite
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,4 @@
+# Runtime Knowledge
+
+This is a runtime smoke test document.
+It includes steps, analysis, and summary.

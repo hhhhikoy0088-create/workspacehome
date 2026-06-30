@@ -1,0 +1,3 @@
+# Runtime Knowledge
+
+This is a runtime smoke test document.
