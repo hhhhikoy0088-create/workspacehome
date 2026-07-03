@@ -422,22 +422,35 @@ app.post('/api/auth/send-code', async (req, res) => {
       VALUES (?, ?, ?, ?, 0, ?)
     `).run(createId(), email, code, expiresAt, now());
 
-    res.json({ message: '验证码已生成', email });
+    const mailConfigured = process.env.MAIL_USER && process.env.MAIL_PASS;
+    let mailSent = false;
+    let devCode = null;
 
-    try {
-      const mailer = createMailer();
-      const from = process.env.MAIL_FROM || process.env.MAIL_USER;
-      await mailer.sendMail({
-        from,
-        to: email,
-        subject: 'Workspace 验证码',
-        text: `你的验证码是：${code}，10 分钟内有效。`,
-        html: `<p>你的验证码是：<strong style="font-size:24px;letter-spacing:2px;">${code}</strong></p><p>10 分钟内有效。</p>`
-      });
-      console.log('[SEND CODE MAIL SUCCESS]', { email });
-    } catch (mailError) {
-      console.error('[SEND CODE MAIL FAILED]', { email, message: mailError.message, code: mailError.code });
+    if (mailConfigured) {
+      try {
+        const mailer = createMailer();
+        const from = process.env.MAIL_FROM || process.env.MAIL_USER;
+        await mailer.sendMail({
+          from,
+          to: email,
+          subject: 'Workspace 验证码',
+          text: `你的验证码是：${code}，10 分钟内有效。`,
+          html: `<p>你的验证码是：<strong style="font-size:24px;letter-spacing:2px;">${code}</strong></p><p>10 分钟内有效。</p>`
+        });
+        mailSent = true;
+        console.log('[SEND CODE MAIL SUCCESS]', { email });
+      } catch (mailError) {
+        console.error('[SEND CODE MAIL FAILED]', { email, message: mailError.message, code: mailError.code });
+      }
     }
+
+    // If mail not configured or sending failed, return code directly for demo use
+    if (!mailSent) {
+      devCode = code;
+      console.log('[SEND CODE DEV MODE]', { email, code });
+    }
+
+    res.json({ message: mailSent ? '验证码已发送至邮箱' : '验证码已生成', email, devCode });
   } catch (error) {
     console.error('[SEND CODE FAILED]', {
       message: error.message,
@@ -1560,22 +1573,34 @@ app.post('/api/auth/send-code', async (req, res) => {
       VALUES (?, ?, ?, ?, 0, ?)
     `).run(createId(), email, code, expiresAt, now());
 
-    res.json({ message: '验证码已生成', email });
+    const mailConfigured = process.env.MAIL_USER && process.env.MAIL_PASS;
+    let mailSent = false;
+    let devCode = null;
 
-    try {
-      const mailer = createMailer();
-      const from = process.env.MAIL_FROM || process.env.MAIL_USER;
-      await mailer.sendMail({
-        from,
-        to: email,
-        subject: 'Workspace 验证码',
-        text: `你的验证码是：${code}，10 分钟内有效。`,
-        html: `<p>你的验证码是：<strong style="font-size:24px;letter-spacing:2px;">${code}</strong></p><p>10 分钟内有效。</p>`
-      });
-      console.log('[SEND CODE MAIL SUCCESS]', { email });
-    } catch (mailError) {
-      console.error('[SEND CODE MAIL FAILED]', { email, message: mailError.message, code: mailError.code });
+    if (mailConfigured) {
+      try {
+        const mailer = createMailer();
+        const from = process.env.MAIL_FROM || process.env.MAIL_USER;
+        await mailer.sendMail({
+          from,
+          to: email,
+          subject: 'Workspace 验证码',
+          text: `你的验证码是：${code}，10 分钟内有效。`,
+          html: `<p>你的验证码是：<strong style="font-size:24px;letter-spacing:2px;">${code}</strong></p><p>10 分钟内有效。</p>`
+        });
+        mailSent = true;
+        console.log('[SEND CODE MAIL SUCCESS]', { email });
+      } catch (mailError) {
+        console.error('[SEND CODE MAIL FAILED]', { email, message: mailError.message, code: mailError.code });
+      }
     }
+
+    if (!mailSent) {
+      devCode = code;
+      console.log('[SEND CODE DEV MODE]', { email, code });
+    }
+
+    res.json({ message: mailSent ? '验证码已发送至邮箱' : '验证码已生成', email, devCode });
   } catch (error) {
     console.error('Send code error:', error.message);
     res.status(500).json({ message: error.message });

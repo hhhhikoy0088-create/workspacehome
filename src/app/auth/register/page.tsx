@@ -24,8 +24,13 @@ export default function RegisterPage() {
     try {
       setSending(true);
       setMessage('');
-      await request.post('/auth/send-code', { email: form.email });
-      setMessage('验证码已发送，请查看控制台日志中的验证码。');
+      const result = await request.post('/auth/send-code', { email: form.email });
+      const devCode = result?.devCode ?? result?.data?.devCode;
+      if (devCode) {
+        setMessage(`验证码：${devCode}（邮件服务未配置，直接显示验证码）`);
+      } else {
+        setMessage('验证码已发送至邮箱，请查收。');
+      }
     } catch (error: any) {
       setMessage(error?.response?.data?.message || error?.message || '发送验证码失败');
       console.error('Send code error:', error?.response?.data || error?.message || error);
