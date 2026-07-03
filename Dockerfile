@@ -6,7 +6,7 @@ WORKDIR /app
 # Install Python and build tools needed for native modules (better-sqlite3)
 # Also make 'python' command available for node-gyp
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 make g++ \
+    python3 make g++ curl \
     && rm -rf /var/lib/apt/lists/* \
     && ln -s /usr/bin/python3 /usr/bin/python
 
@@ -31,7 +31,7 @@ WORKDIR /app
 
 # Install system deps for better-sqlite3
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 make g++ \
+    python3 make g++ curl \
     && rm -rf /var/lib/apt/lists/* \
     && ln -s /usr/bin/python3 /usr/bin/python
 
