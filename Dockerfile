@@ -4,12 +4,11 @@ FROM node:20-slim AS frontend-builder
 WORKDIR /app
 
 # Install Python and build tools needed for native modules (better-sqlite3)
+# Also make 'python' command available for node-gyp
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 make g++ \
-    && rm -rf /var/lib/apt/lists/*
-
-# Configure node-gyp to use python3
-RUN npm config set python python3
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/bin/python3 /usr/bin/python
 
 # Copy package files
 COPY package.json package-lock.json* ./
@@ -33,9 +32,8 @@ WORKDIR /app
 # Install system deps for better-sqlite3
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 make g++ \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN npm config set python python3
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/bin/python3 /usr/bin/python
 
 # Copy package files and install ALL deps
 COPY package.json package-lock.json* ./
