@@ -46,7 +46,6 @@ RUN cd server && npm install --legacy-peer-deps
 # Copy built Next.js standalone
 COPY --from=frontend-builder /app/.next/standalone ./
 COPY --from=frontend-builder /app/.next/static ./.next/static
-COPY --from=frontend-builder /app/public ./public
 
 # Copy server code
 COPY server/ ./server/
