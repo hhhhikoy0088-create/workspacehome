@@ -1,10 +1,16 @@
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 
-const client = new OpenAI({
-  apiKey: process.env.DEEPSEEK_API_KEY,
-  baseURL: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
-});
+let _client: OpenAI | null = null;
+function getClient() {
+  if (!_client) {
+    _client = new OpenAI({
+      apiKey: process.env.DEEPSEEK_API_KEY,
+      baseURL: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
+    });
+  }
+  return _client;
+}
 
 function normalizeRows(rows: any[]) {
   return rows.map((row) => {
@@ -63,7 +69,7 @@ export async function POST(req: Request) {
 数据样本：
 ${JSON.stringify(summary, null, 2)}`;
 
-    const completion = await client.chat.completions.create({
+    const completion = await getClient().chat.completions.create({
       model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
       messages: [
         { role: 'system', content: '只输出严格 JSON，不要解释。' },
