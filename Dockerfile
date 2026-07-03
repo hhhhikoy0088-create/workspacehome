@@ -62,6 +62,7 @@ RUN chmod +x start.sh
 # Environment
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
 ENV BACKEND_PORT=3001
 ENV BACKEND_URL=http://127.0.0.1:3001
 ENV DB_DIR=/app/data
