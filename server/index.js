@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const multer = require('multer');
 const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 const { db, syncBack } = require('./db');
 const pptRoutes = require('./routes/ppt');
 const { generatePPT, normalizePPTDocument, fallbackDoc } = require('../ppt-engine/index.ts');
@@ -317,6 +318,31 @@ function createMailer() {
   });
 }
 
+// --- Resend (HTTP API, works in Railway) ---
+let _resendClient = null;
+function getResendClient() {
+  if (_resendClient) return _resendClient;
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) return null;
+  _resendClient = new Resend(apiKey);
+  return _resendClient;
+}
+
+async function sendMailViaResend({ to, subject, text, html }) {
+  const client = getResendClient();
+  if (!client) throw new Error('RESEND_API_KEY not configured');
+  const from = process.env.MAIL_FROM || 'onboarding@resend.dev';
+  const { data, error } = await client.emails.send({
+    from,
+    to,
+    subject,
+    text,
+    html
+  });
+  if (error) throw error;
+  return data;
+}
+
 function ensureDemoUser() {
   // removed demo fallback user
 }
@@ -425,15 +451,32 @@ app.post('/api/auth/send-code', async (req, res) => {
       VALUES (?, ?, ?, ?, 0, ?)
     `).run(createId(), email, code, expiresAt, now());
 
-    const mailConfigured = process.env.MAIL_USER && process.env.MAIL_PASS;
+    const resendConfigured = !!process.env.RESEND_API_KEY;
+    const smtpConfigured = process.env.MAIL_USER && process.env.MAIL_PASS;
     let mailSent = false;
     let devCode = null;
 
-    if (mailConfigured) {
+    // 1. Try Resend (HTTP API, works in Railway containers)
+    if (resendConfigured) {
+      try {
+        await sendMailViaResend({
+          to: email,
+          subject: 'Workspace 验证码',
+          text: `你的验证码是：${code}，10 分钟内有效。`,
+          html: `<p>你的验证码是：<strong style="font-size:24px;letter-spacing:2px;">${code}</strong></p><p>10 分钟内有效。</p>`
+        });
+        mailSent = true;
+        console.log('[SEND CODE RESEND SUCCESS]', { email });
+      } catch (resendError) {
+        console.error('[SEND CODE RESEND FAILED]', { email, message: resendError.message });
+      }
+    }
+
+    // 2. Fallback to SMTP (nodemailer) if Resend not configured or failed
+    if (!mailSent && smtpConfigured) {
       try {
         const mailer = createMailer();
         const from = process.env.MAIL_FROM || process.env.MAIL_USER;
-        // Race sendMail against a 6-second timeout so the request never hangs
         const mailPromise = mailer.sendMail({
           from,
           to: email,
@@ -442,13 +485,13 @@ app.post('/api/auth/send-code', async (req, res) => {
           html: `<p>你的验证码是：<strong style="font-size:24px;letter-spacing:2px;">${code}</strong></p><p>10 分钟内有效。</p>`
         });
         const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Mail send timeout after 6s')), 6000)
+          setTimeout(() => reject(new Error('SMTP timeout after 6s')), 6000)
         );
         await Promise.race([mailPromise, timeoutPromise]);
         mailSent = true;
-        console.log('[SEND CODE MAIL SUCCESS]', { email });
+        console.log('[SEND CODE SMTP SUCCESS]', { email });
       } catch (mailError) {
-        console.error('[SEND CODE MAIL FAILED]', { email, message: mailError.message, code: mailError.code });
+        console.error('[SEND CODE SMTP FAILED]', { email, message: mailError.message, code: mailError.code });
       }
     }
 
