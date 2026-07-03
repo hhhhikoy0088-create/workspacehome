@@ -12,11 +12,10 @@ if [ -f /app/server/market.db ] && [ ! -f /app/data/market.db ]; then
   cp /app/server/market.db /app/data/market.db
 fi
 
-# Start Express backend
+# Start Express backend in background
 start_backend() {
   echo "[1/2] Starting Express backend on port $BACKEND_PORT..."
   cd /app/server
-  # Use tsx from server node_modules if available
   if [ -x /app/server/node_modules/.bin/tsx ]; then
     TSX=/app/server/node_modules/.bin/tsx
   elif [ -x /app/node_modules/.bin/tsx ]; then
@@ -26,12 +25,11 @@ start_backend() {
     exit 1
   fi
 
-  $TSX index.js > /app/server.log 2>&1 &
+  $TSX index.js &
   BACKEND_PID=$!
   echo "Backend PID: $BACKEND_PID"
 
-  # Wait until backend is ready
-  for i in {1..30}; do
+  for i in {1..15}; do
     if curl -s http://127.0.0.1:$BACKEND_PORT/api/ping > /dev/null 2>&1; then
       echo "[ok] Backend ready after ${i}s"
       return 0
@@ -39,22 +37,20 @@ start_backend() {
     sleep 1
   done
 
-  echo "[error] Backend failed to start. Last 50 lines of /app/server.log:"
-  tail -n 50 /app/server.log
+  echo "[error] Backend failed to start."
   exit 1
 }
 
 start_backend
 
-# Start Next.js frontend
+# Start Next.js frontend in background
 echo "[2/2] Starting Next.js frontend on port $PORT..."
 cd /app
-node server.js > /app/frontend.log 2>&1 &
+node server.js &
 FRONTEND_PID=$!
 echo "Frontend PID: $FRONTEND_PID"
 
-# Wait until frontend is ready
-for i in {1..30}; do
+for i in {1..15}; do
   if curl -s http://127.0.0.1:$PORT/ > /dev/null 2>&1; then
     echo "[ok] Frontend ready after ${i}s"
     break
@@ -64,7 +60,7 @@ done
 
 echo "=== Both services started ==="
 
-# Graceful shutdown handler
+# Keep script as PID 1, handle signals
 shutdown() {
   echo "Shutting down..."
   kill $FRONTEND_PID $BACKEND_PID 2>/dev/null || true
@@ -73,5 +69,5 @@ shutdown() {
 }
 trap shutdown SIGTERM SIGINT
 
-# Keep script alive and wait for children
+# Keep the script alive
 wait $FRONTEND_PID $BACKEND_PID
