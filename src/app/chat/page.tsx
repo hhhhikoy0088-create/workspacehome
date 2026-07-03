@@ -55,11 +55,10 @@ function ChatPageContent() {
         } else {
           setMessages([{ role: 'assistant', content: initialAssistantMessage }]);
         }
-      } catch (error: any) {
+      } catch {
         if (!cancelled) {
           setMessages([{ role: 'assistant', content: initialAssistantMessage }]);
         }
-        console.error('Load chat history error:', error?.message || error);
       }
     };
 
@@ -95,9 +94,8 @@ function ChatPageContent() {
       await createChatMessageApi({ user_id: userId, role: 'assistant', content: reply });
 
       setMessages((prev) => [...prev, { role: 'assistant', content: reply }]);
-    } catch (error: any) {
+    } catch {
       setMessages((prev) => [...prev, { role: 'assistant', content: '请求失败，请稍后再试。' }]);
-      console.error('Chat API error:', error?.message || error);
     } finally {
       isSendingRef.current = false;
       setLoading(false);
@@ -110,21 +108,21 @@ function ChatPageContent() {
   };
 
   return (
-    <main className="h-[100dvh] overflow-hidden px-4 py-4 text-zinc-100 md:px-6 lg:px-8">
-      <div className="mx-auto flex h-full max-w-5xl flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900/80 shadow-panel backdrop-blur-2xl">
-        <header className="flex-shrink-0 border-b border-zinc-800 p-4 md:p-5">
+    <main className="h-[100dvh] overflow-hidden px-4 py-4 text-slate-800 md:px-6 lg:px-8">
+      <div className="mx-auto flex h-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white/90 shadow-[0_1px_3px_rgba(15,23,42,0.04),0_4px_24px_rgba(15,23,42,0.06)] backdrop-blur-xl">
+        <header className="flex-shrink-0 border-b border-slate-200/70 p-4 md:p-5">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-center gap-3">
               <Link
                 href="/dashboard"
-                className="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-800/60 text-blue-400 transition hover:border-zinc-700 hover:bg-zinc-800"
+                className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-indigo-500 transition hover:border-indigo-200 hover:bg-indigo-50/50"
               >
                 ←
               </Link>
-              <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-blue-600 text-2xl text-white">W</div>
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 text-2xl font-bold text-white shadow-[0_4px_12px_rgba(99,102,241,0.3)]">W</div>
               <div>
-                <p className="text-lg font-semibold text-zinc-50">workspace</p>
-                <p className="text-sm text-zinc-500">你好，我是小W，有什么可以帮助你。</p>
+                <p className="text-lg font-semibold text-slate-800">workspace</p>
+                <p className="text-sm text-slate-400">你好，我是小W，有什么可以帮助你。</p>
               </div>
             </div>
           </div>
@@ -136,8 +134,10 @@ function ChatPageContent() {
               {messages.map((m, idx) => (
                 <div key={`${m.role}-${idx}-${m.content.slice(0, 12)}`} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                   <div
-                    className={`max-w-[85%] rounded-lg border px-4 py-3 text-sm leading-7 md:max-w-[70%] ${
-                      m.role === 'assistant' ? 'border-zinc-800 bg-zinc-800/60 text-zinc-50' : 'border-zinc-800 bg-zinc-800/40 text-zinc-50'
+                    className={`max-w-[85%] rounded-2xl border px-4 py-3 text-sm leading-7 md:max-w-[70%] ${
+                      m.role === 'user'
+                        ? 'border-transparent bg-gradient-to-r from-indigo-500 to-violet-500 text-white shadow-[0_4px_16px_rgba(99,102,241,0.2)]'
+                        : 'border-slate-200/70 bg-slate-50/80 text-slate-700'
                     }`}
                   >
                     {m.content}
@@ -146,14 +146,14 @@ function ChatPageContent() {
               ))}
               {loading ? (
                 <div className="flex justify-start">
-                  <div className="rounded-lg border border-zinc-800 bg-zinc-800/60 px-4 py-3 text-sm leading-7 text-zinc-50">小W 正在思考中...</div>
+                  <div className="rounded-2xl border border-slate-200/70 bg-slate-50/80 px-4 py-3 text-sm leading-7 text-slate-500">小W 正在思考中...</div>
                 </div>
               ) : null}
               <div ref={messagesEndRef} />
             </div>
           </div>
 
-          <form onSubmit={handleSubmit} className="flex-shrink-0 border-t border-zinc-800 p-4 md:p-5">
+          <form onSubmit={handleSubmit} className="flex-shrink-0 border-t border-slate-200/70 p-4 md:p-5">
             <div className="mb-3 flex flex-wrap gap-2">
               {suggestions.map((item) => (
                 <button
@@ -161,31 +161,29 @@ function ChatPageContent() {
                   type="button"
                   onClick={() => send(item)}
                   disabled={loading}
-                  className="rounded-full border border-zinc-800 bg-zinc-800/60 px-4 py-2 text-sm text-zinc-300 transition hover:border-zinc-700 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="rounded-full border border-slate-200 bg-white/80 px-4 py-2 text-sm text-slate-500 transition hover:border-indigo-200 hover:bg-indigo-50/50 hover:text-indigo-600 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {item}
                 </button>
               ))}
             </div>
 
-            <div className="flex gap-3 rounded-[20px] border border-zinc-800 bg-zinc-800/30 p-3">
+            <div className="flex gap-3 rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
               <input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="问 workspace 任何问题..."
-                className="min-w-0 flex-1 bg-transparent px-2 py-2 text-sm text-zinc-50 outline-none placeholder:text-zinc-500"
+                className="min-w-0 flex-1 bg-transparent px-2 py-2 text-sm text-slate-800 outline-none placeholder:text-slate-400"
                 disabled={loading}
               />
               <button
                 type="submit"
                 disabled={loading}
-                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-xl bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-2 text-sm font-semibold text-white shadow-[0_4px_12px_rgba(99,102,241,0.3)] transition hover:from-indigo-600 hover:to-violet-600 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 ↑
               </button>
             </div>
-
-            <div className="mt-5 text-sm text-zinc-400">你发送的问题会进入长期记忆，并用于生成你的个人知识库。</div>
           </form>
         </section>
       </div>
@@ -195,7 +193,7 @@ function ChatPageContent() {
 
 export default function ChatPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-zinc-950 p-6 text-zinc-100">加载中...</div>}>
+    <Suspense fallback={<div className="min-h-screen bg-slate-50 p-6 text-slate-500">加载中...</div>}>
       <ChatPageContent />
     </Suspense>
   );

@@ -19,11 +19,6 @@ export default function LoginPage() {
       setLoading(true);
       setMessage('');
       const result = await request.post('/auth/login', { account, password });
-      console.log('[login page] result =', result);
-      console.log('[login page] result.user =', result?.user);
-      console.log('[login page] result.data =', result?.data);
-      console.log('[login page] result.data.user =', result?.data?.user);
-      console.log('[login page] token =', result?.token ?? result?.data?.token);
 
       const rawUser = result?.user ?? result?.data?.user;
       const token = result?.token ?? result?.data?.token ?? '';
@@ -43,10 +38,8 @@ export default function LoginPage() {
       await setAuthUser(authUser, token);
       setMessage('登录成功，正在跳转...');
       router.replace('/dashboard');
-      console.log('Current auth state =', authUser);
     } catch (error: any) {
       setMessage(error?.response?.data?.message || error?.message || '登录失败');
-      console.error('Login error:', error?.response?.data || error?.message || error);
     } finally {
       setLoading(false);
     }

@@ -1,4 +1,5 @@
 const path = require('path');
+const os = require('os');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env.local') });
 require('dotenv').config();
 
@@ -8,13 +9,85 @@ const crypto = require('crypto');
 const fs = require('fs');
 const multer = require('multer');
 const nodemailer = require('nodemailer');
-const { db } = require('./db');
-const { parseSourceFile, generateOutline, buildPptxFile, analyzeDocumentType } = require('./services/ppt-utils');
+const { db, syncBack } = require('./db');
+const pptRoutes = require('./routes/ppt');
+const { generatePPT, normalizePPTDocument, fallbackDoc } = require('../ppt-engine/index.ts');
+const { exportPDF } = require('../ppt/export/pdf.ts');
+
+async function parseSourceFile(filePath) {
+  const fileName = path.basename(filePath);
+  const ext = path.extname(filePath).toLowerCase();
+  let text = '';
+
+  try {
+    if (ext === '.docx') {
+      try {
+        const mammoth = require('mammoth');
+        const result = await mammoth.extractRawText({ path: filePath });
+        text = result.value || '';
+      } catch {
+        const JSZip = require('jszip');
+        const zip = await JSZip.loadAsync(fs.readFileSync(filePath));
+        const xml = await zip.file('word/document.xml')?.async('text') || '';
+        const matches = xml.match(/<w:t[^>]*>([^<]+)<\/w:t>/g);
+        text = matches ? matches.map(t => t.replace(/<[^>]+>/g, '')).join('') : '';
+      }
+    } else if (ext === '.pdf') {
+      try {
+        const pdfParse = require('pdf-parse');
+        const data = await pdfParse(fs.readFileSync(filePath));
+        text = data.text || '';
+      } catch {
+        const buffer = fs.readFileSync(filePath);
+        text = buffer.toString('utf-8').replace(/[^\x20-\x7E\u4e00-\u9fa5\s]/g, ' ').trim();
+      }
+    } else if (ext === '.txt' || ext === '.md') {
+      text = fs.readFileSync(filePath, 'utf-8');
+    } else {
+      text = `已上传文件：${fileName}`;
+    }
+  } catch (e) {
+    text = `已上传文件：${fileName}（内容解析失败：${e.message}）`;
+  }
+
+  text = text.trim();
+  return {
+    title: fileName.replace(/\.[^.]+$/, ''),
+    text: text.slice(0, 8000),
+    summary: text.slice(0, 1000),
+    paragraphs: text.split(/\n\s*\n|\r\n\s*\r\n/).filter(p => p.trim().length > 10).slice(0, 30),
+    sections: text.split(/\n\s*\n/).filter(p => p.trim().length > 10).slice(0, 15).map((p, i) => ({ title: `段落 ${i + 1}`, content: p.slice(0, 300) })),
+    keywords: [...new Set((text.match(/[\u4e00-\u9fa5]{2,6}/g) || []))].slice(0, 15),
+    fileName
+  };
+}
+
+function analyzeDocumentType(parsed) {
+  const text = String(parsed?.text || '');
+  const documentType = /PPT|演示|汇报/i.test(text) ? '汇报' : '教程';
+  return { documentType, matchedKeywords: parsed?.keywords || [] };
+}
+
+async function generateOutline({ content, summary, pptType, slideCount }) {
+  const title = String(pptType || 'PPT大纲');
+  const slides = Array.from({ length: Math.max(1, Number(slideCount) || 3) }, (_, i) => ({ index: String(i + 1), title: i === 0 ? title : `第 ${i + 1} 页`, type: i === 0 ? 'hero' : 'text', bullets: i === 0 ? [summary || content || ''] : [content || ''] }));
+  return { title, subtitle: summary || '', slides };
+}
+
+async function buildPptxFile({ outline, outputDir, sourceFileName }) {
+  const { exportPPTX } = require('../ppt/export/pptx.ts');
+  const normalized = normalizePPTDocument(outline || fallbackDoc(), String(sourceFileName || 'PPT'));
+  const buffer = await exportPPTX(normalized);
+  const fileName = `${Date.now()}-${String(sourceFileName || outline?.title || 'output').replace(/[^\w\u4e00-\u9fa5-]+/g, '_')}.pptx`;
+  const filePath = path.join(outputDir, fileName);
+  fs.writeFileSync(filePath, buffer);
+  return { fileId: fileName, fileName };
+}
 
 const app = express();
-const PORT = 3001;
+const PORT = process.env.BACKEND_PORT || 3001;
 const GOAL_OPTIONS = ['考研', '升本', '考公', '考证', '英语四六级', '普通话'];
-const PPT_UPLOAD_DIR = path.join(__dirname, 'uploads', 'ppt');
+const PPT_UPLOAD_DIR = path.join(os.tmpdir(), 'ppt-uploads');
 const PPT_OUTPUT_DIR = path.join(__dirname, 'outputs', 'ppt');
 fs.mkdirSync(PPT_UPLOAD_DIR, { recursive: true });
 fs.mkdirSync(PPT_OUTPUT_DIR, { recursive: true });
@@ -94,6 +167,7 @@ app.use((req, res, next) => {
 // 导入简历优化路由
 const resumeRoutes = require('./routes/resume');
 app.use('/api/resume', resumeRoutes);
+app.use('/api/ppt', pptRoutes);
 
 // 请求日志
 app.use((req, res, next) => {
@@ -119,6 +193,58 @@ function now() {
   return new Date().toISOString();
 }
 
+function getTodayKey(date = new Date()) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString().slice(0, 10);
+}
+
+function recordDailyActivity(userId, source = 'open_app') {
+  if (!userId) return;
+  const today = getTodayKey();
+  const existing = db.prepare('SELECT id FROM user_daily_activity WHERE user_id = ? AND activity_date = ?').get(userId, today);
+  if (!existing) {
+    db.prepare(`
+      INSERT INTO user_daily_activity (id, user_id, activity_date, source, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(createId(), userId, today, source, now(), now());
+  }
+}
+
+function getStreakDays(userId) {
+  if (!userId) return 0;
+  const rows = db.prepare('SELECT activity_date FROM user_daily_activity WHERE user_id = ? ORDER BY activity_date DESC').all(userId);
+  if (!rows.length) return 0;
+
+  const user = db.prepare('SELECT created_at FROM users WHERE id = ?').get(userId);
+  const createdAt = user?.created_at ? new Date(user.created_at) : new Date(0);
+
+  const today = getTodayKey();
+  const yesterday = getTodayKey(new Date(Date.now() - 24 * 60 * 60 * 1000));
+  const latest = rows[0].activity_date;
+
+  // 如果今天或昨天都没有活跃，则断掉
+  if (latest !== today && latest !== yesterday) return 0;
+
+  const dateSet = new Set(rows.map((r) => r.activity_date));
+  let streak = 0;
+  const cursor = new Date();
+  cursor.setHours(0, 0, 0, 0);
+
+  // 只统计创建账号之后的日期
+  while (cursor >= createdAt) {
+    const key = getTodayKey(cursor);
+    if (dateSet.has(key)) {
+      streak += 1;
+      cursor.setDate(cursor.getDate() - 1);
+    } else {
+      break;
+    }
+  }
+
+  return Math.min(365, streak);
+}
+
 function safeJsonParse(value, fallback = []) {
   if (!value) return fallback;
   try {
@@ -132,6 +258,19 @@ function toJsonString(value) {
   if (value === undefined || value === null) return null;
   if (typeof value === 'string') return value;
   return JSON.stringify(value);
+}
+
+function snakeToCamel(obj) {
+  if (Array.isArray(obj)) return obj.map(snakeToCamel);
+  if (obj && typeof obj === 'object') {
+    const result = {};
+    for (const [key, value] of Object.entries(obj)) {
+      const camelKey = key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+      result[camelKey] = value;
+    }
+    return result;
+  }
+  return obj;
 }
 
 function parseAiJson(content) {
@@ -283,7 +422,6 @@ app.post('/api/auth/send-code', async (req, res) => {
       VALUES (?, ?, ?, ?, 0, ?)
     `).run(createId(), email, code, expiresAt, now());
 
-    console.log('[SEND CODE CREATED]', { email, code });
     res.json({ message: '验证码已生成', email });
 
     try {
@@ -331,15 +469,6 @@ app.post('/api/auth/register', async (req, res) => {
       ORDER BY created_at DESC
       LIMIT 1
     `).get(email, code);
-
-    console.log('[REGISTER VERIFY]', {
-      found: Boolean(record),
-      email,
-      code,
-      recordCode: record?.code,
-      expiresAt: record?.expires_at,
-      used: record?.used
-    });
 
     if (!record) {
       return res.status(400).json({ message: '验证码错误或不存在' });
@@ -401,7 +530,6 @@ app.post('/api/auth/login', (req, res) => {
       token,
       user
     };
-    console.log('[LOGIN RESPONSE]', loginResponse);
     res.json(loginResponse);
   } catch (error) {
     console.error('Login error:', error.message);
@@ -648,19 +776,6 @@ app.get('/api/profile', (req, res) => {
   res.json(buildProfileEngine(user, userId));
 });
 
-app.get('/api/learning-coach/context', (req, res) => {
-  const userId = String(req.query.userId || '').trim();
-  if (!userId) {
-    return res.status(401).json({ message: 'userId is required' });
-  }
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
-  if (!user) {
-    return res.status(404).json({ message: 'User not found' });
-  }
-  const goalContext = getGoalContext(user?.goal, user?.goal_target_date);
-  res.json({ user: serializeUser(user), goalContext });
-});
-
 app.get('/api/learning', (req, res) => {
   const userId = String(req.query.userId || '').trim();
   if (!userId) {
@@ -687,6 +802,719 @@ app.get('/api/learning', (req, res) => {
   });
 });
 
+/* =========================================
+   学习教练 / Learning Coach
+========================================= */
+
+function normalizeText(text) {
+  return String(text || '').replace(/\r/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function splitIntoChunks(text, minLen = 300, maxLen = 600) {
+  const normalized = normalizeText(text);
+  if (!normalized) return [];
+  const sentences = normalized.split(/(?<=[。！？.!?])\s*/).filter((s) => s.trim().length > 0);
+  const chunks = [];
+  let current = '';
+  for (const sentence of sentences) {
+    if (current.length + sentence.length > maxLen && current.length >= minLen) {
+      chunks.push(current.trim());
+      current = sentence;
+    } else {
+      current += sentence;
+    }
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks.length ? chunks : [normalized.slice(0, maxLen)];
+}
+
+function titleFromChunk(content, index = 0) {
+  const normalized = normalizeText(content);
+  const firstSentence = normalized.split(/(?<=[。！？.!?])\s*/).find((s) => s.trim().length > 0) || '';
+  const clean = firstSentence.replace(/[#*\-`\[\]()（）]/g, '').trim();
+  if (clean.length >= 8 && clean.length <= 80) return clean;
+  if (clean.length > 80) return clean.slice(0, 80);
+  return `知识点 ${index + 1}`;
+}
+
+function difficultyFromContent(content) {
+  const len = normalizeText(content).length;
+  if (len < 120) return 'easy';
+  if (len < 300) return 'medium';
+  return 'hard';
+}
+
+function priorityFromContent(content, index = 0) {
+  const len = normalizeText(content).length;
+  const base = len < 120 ? 1 : len < 300 ? 3 : 5;
+  return Math.max(1, Math.min(5, base + index));
+}
+
+function generateExerciseFromChunk(chunk, nodeId, knowledgePointId, planId, userId) {
+  const content = chunk.content || '';
+  const sentences = content.split(/(?<=[。！？.!?])\s*/).filter((s) => s.trim().length > 10);
+  const firstSentence = sentences[0] || content.slice(0, 120);
+
+  // 提取 2-6 字中文词作为选项素材
+  const words = Array.from(new Set((content.match(/[\u4e00-\u9fa5]{2,6}/g) || []))).filter((w) => w.length >= 2 && w.length <= 6).slice(0, 8);
+
+  const id = createId();
+  if (words.length < 4) {
+    return {
+      id,
+      userId,
+      studyPlanId: planId,
+      nodeId,
+      knowledgePointId,
+      sourceChunkId: chunk.id,
+      question: `阅读材料后判断：以下哪一项描述与材料内容一致？`,
+      options: ['描述与材料一致', '描述与材料不一致', '材料未提及', '无法判断'],
+      correctAnswer: '描述与材料一致',
+      explanation: `根据材料：${firstSentence}`,
+      difficulty: 'easy'
+    };
+  }
+
+  // 正确答案取第一个关键词，确保与问题相关
+  const correctAnswer = words[0];
+  const distractors = words.slice(1, 4);
+  // 打乱选项顺序，但正确答案固定存在
+  const options = [correctAnswer, ...distractors];
+
+  return {
+    id,
+    userId,
+    studyPlanId: planId,
+    nodeId,
+    knowledgePointId,
+    sourceChunkId: chunk.id,
+    question: `根据材料内容，下列哪一项是被明确提及的概念？`,
+    options,
+    correctAnswer,
+    explanation: `材料中提到：${firstSentence}，其中明确包含「${correctAnswer}」。`,
+    difficulty: 'medium'
+  };
+}
+
+function buildPlanFromKnowledgeBase(userId, knowledgeBaseId, query = '') {
+  const base = db.prepare('SELECT * FROM knowledge_bases WHERE id = ? AND user_id = ?').get(knowledgeBaseId, userId);
+  if (!base) throw new Error('知识库不存在');
+
+  const documents = db.prepare('SELECT * FROM knowledge_documents WHERE knowledge_base_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT 30').all(knowledgeBaseId, userId);
+  if (!documents.length) throw new Error('知识库中没有文档，请先上传文件');
+
+  const planId = createId();
+  const allExercises = [];
+
+  const knowledgePoints = documents.slice(0, 8).map((doc, index) => {
+    const content = normalizeText(doc.content || doc.summary || '');
+    const chunks = splitIntoChunks(content, 300, 600);
+    const title = titleFromChunk(content, index);
+    const difficulty = difficultyFromContent(content);
+    const priority = priorityFromContent(content, index);
+    const pointId = createId();
+    const nodeId = createId();
+    const docChunks = chunks.length
+      ? chunks.map((c, i) => ({ id: createId(), fileName: doc.original_name || doc.file_name, content: c, chunkIndex: i }))
+      : [{ id: createId(), fileName: doc.original_name || doc.file_name, content: content.slice(0, 300), chunkIndex: 0 }];
+
+    const rootNode = {
+      id: nodeId,
+      title,
+      difficulty,
+      mastery: 0,
+      priority,
+      status: index === 0 ? 'active' : 'pending',
+      chunkIds: docChunks.map((c) => c.id),
+      chunks: docChunks,
+      sourceFiles: [doc.original_name || doc.file_name],
+      children: docChunks.slice(1).map((c, i) => {
+        const childId = createId();
+        const childNode = {
+          id: childId,
+          title: titleFromChunk(c.content, i + 1),
+          difficulty: difficultyFromContent(c.content),
+          mastery: 0,
+          priority: Math.max(1, Math.min(5, priority + i)),
+          status: 'pending',
+          chunkIds: [c.id],
+          chunks: [c],
+          sourceFiles: [c.fileName],
+          children: []
+        };
+        // 为叶子节点生成练习题
+        const ex = generateExerciseFromChunk(c, childId, pointId, planId, userId);
+        allExercises.push(ex);
+        return childNode;
+      })
+    };
+
+    // 为根节点也生成一道综合题
+    if (docChunks[0]) {
+      const ex = generateExerciseFromChunk(docChunks[0], nodeId, pointId, planId, userId);
+      allExercises.push(ex);
+    }
+
+    return {
+      id: pointId,
+      title,
+      difficulty,
+      mastery: 0,
+      priority,
+      status: 'pending',
+      sourceFiles: [doc.original_name || doc.file_name],
+      sourceChunkIds: docChunks.map((c) => c.id),
+      chunkIds: docChunks.map((c) => c.id),
+      createdAt: now(),
+      tree: [rootNode]
+    };
+  });
+
+  const titles = knowledgePoints.map((p) => p.title);
+  const learningRoute = titles.slice(0, 6);
+  const dailyPlan = titles.slice(0, 3).map((t) => `学习：${t}`);
+  const reviewPlan = titles.slice(0, 4).map((t, i) => `第${i + 1}轮复习：${t}`);
+
+  const tasks = knowledgePoints.map((point, index) => {
+    const rootTitle = point.title;
+    const dueDate = new Date(Date.now() + index * 24 * 60 * 60 * 1000).toISOString();
+    return {
+      id: createId(),
+      userId,
+      learningPlanId: planId,
+      title: `学习并应用：${rootTitle}`,
+      status: index === 0 ? 'active' : 'pending',
+      order: index + 1,
+      dueDate,
+      sourceChunkId: point.sourceChunkIds[0],
+      fileName: point.sourceFiles[0],
+      knowledgePointId: point.id,
+      knowledgePointTitle: rootTitle,
+      sourceType: 'plan',
+      queryText: query,
+      createdAt: now()
+    };
+  });
+
+  const pathRecommendation = knowledgePoints.map((point, index) => ({
+    order: index + 1,
+    pointId: point.id,
+    title: point.title,
+    difficulty: point.difficulty,
+    mastery: point.mastery,
+    sourceChunkIds: point.sourceChunkIds,
+    recommendedReason: index === 0 ? '前置基础，优先掌握' : `基于 ${point.sourceFiles[0]} 推荐`
+  }));
+
+  const plan = {
+    id: planId,
+    userId,
+    knowledgeBaseId,
+    status: 'active',
+    title: `基于「${base.name}」的学习计划`,
+    knowledgePoints: knowledgePoints.map((p) => ({
+      id: p.id,
+      title: p.title,
+      difficulty: p.difficulty,
+      mastery: p.mastery,
+      priority: p.priority,
+      status: p.status,
+      sourceFiles: p.sourceFiles,
+      sourceChunkIds: p.sourceChunkIds,
+      chunkIds: p.chunkIds,
+      createdAt: p.createdAt,
+      tree: p.tree
+    })),
+    learningRoute,
+    dailyPlan,
+    reviewPlan,
+    exercises: allExercises
+  };
+
+  return { plan, tasks, pathRecommendation, knowledgePoints, exercises: allExercises };
+}
+
+function persistLearningPlan(userId, knowledgeBaseId, query = '') {
+  const { plan, tasks, pathRecommendation, knowledgePoints, exercises } = buildPlanFromKnowledgeBase(userId, knowledgeBaseId, query);
+
+  db.prepare(`
+    INSERT INTO study_plans (id, user_id, title, content, status, knowledge_base_id, knowledge_points_json, learning_route_json, daily_plan_json, review_plan_json, exercises_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    plan.id,
+    userId,
+    plan.title,
+    JSON.stringify(plan),
+    plan.status,
+    knowledgeBaseId,
+    JSON.stringify(plan.knowledgePoints),
+    JSON.stringify(plan.learningRoute),
+    JSON.stringify(plan.dailyPlan),
+    JSON.stringify(plan.reviewPlan),
+    JSON.stringify(plan.exercises),
+    now(),
+    now()
+  );
+
+  const insertTask = db.prepare(`
+    INSERT INTO tasks (id, user_id, title, description, status, priority, due_date, source, task_order, source_chunk_id, file_name, knowledge_point_id, knowledge_point_title, source_type, query_text, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  for (const task of tasks) {
+    insertTask.run(
+      task.id,
+      userId,
+      task.title,
+      JSON.stringify({ sourceType: task.sourceType, queryText: task.queryText }),
+      task.status,
+      'medium',
+      task.dueDate,
+      'learning-coach',
+      task.order,
+      task.sourceChunkId,
+      task.fileName,
+      task.knowledgePointId,
+      task.knowledgePointTitle,
+      task.sourceType,
+      task.queryText,
+      now(),
+      now()
+    );
+  }
+
+  const insertExercise = db.prepare(`
+    INSERT INTO exercises (id, user_id, study_plan_id, node_id, knowledge_point_id, source_chunk_id, question, options, correct_answer, explanation, difficulty, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  for (const ex of exercises) {
+    insertExercise.run(
+      ex.id,
+      ex.userId,
+      ex.studyPlanId,
+      ex.nodeId,
+      ex.knowledgePointId,
+      ex.sourceChunkId,
+      ex.question,
+      JSON.stringify(ex.options),
+      ex.correctAnswer,
+      ex.explanation,
+      ex.difficulty,
+      now(),
+      now()
+    );
+  }
+
+  return { plan, tasks, pathRecommendation, exercises };
+}
+
+function calculateNodeMastery(nodeId, totalExercises) {
+  if (!totalExercises) return 0;
+  const attempts = db.prepare('SELECT * FROM exercise_attempts WHERE exercise_id IN (SELECT id FROM exercises WHERE node_id = ?)').all(nodeId);
+  if (!attempts.length) return 0;
+  const correct = attempts.filter((a) => a.is_correct === 1).length;
+  return Math.round((correct / attempts.length) * 100);
+}
+
+function buildCoachContext(userId) {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+  if (!user) throw new Error('User not found');
+
+  const planRecord = db.prepare('SELECT * FROM study_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT 1').get(userId);
+  const goalContext = getGoalContext(user?.goal, user?.goal_target_date);
+
+  if (!planRecord) {
+    return { user: serializeUser(user), goalContext, plan: null, tasks: [], progress: { learningProgress: 0, todayTasks: 0, completionRate: 0, streakDays: getStreakDays(userId) }, pathRecommendation: [], wrongAnswers: [] };
+  }
+
+  const knowledgePoints = safeJsonParse(planRecord.knowledge_points_json, []);
+  const plan = {
+    id: planRecord.id,
+    userId: planRecord.user_id,
+    knowledgeBaseId: planRecord.knowledge_base_id,
+    status: planRecord.status,
+    title: planRecord.title,
+    knowledgePoints: Array.isArray(knowledgePoints) ? knowledgePoints : safeJsonParse(planRecord.content, {})?.knowledgePoints || [],
+    learningRoute: safeJsonParse(planRecord.learning_route_json, []),
+    dailyPlan: safeJsonParse(planRecord.daily_plan_json, []),
+    reviewPlan: safeJsonParse(planRecord.review_plan_json, []),
+    exercises: safeJsonParse(planRecord.exercises_json, [])
+  };
+
+  // 用答题记录计算每个节点的掌握度
+  const exerciseRecords = db.prepare('SELECT * FROM exercises WHERE study_plan_id = ? AND user_id = ?').all(planRecord.id, userId);
+  const exercisesByNode = {};
+  for (const ex of exerciseRecords) {
+    if (!exercisesByNode[ex.node_id]) exercisesByNode[ex.node_id] = [];
+    exercisesByNode[ex.node_id].push(ex);
+  }
+
+  const walkTree = (nodes) => {
+    for (const node of nodes || []) {
+      node.mastery = calculateNodeMastery(node.id, (exercisesByNode[node.id] || []).length);
+      if (node.children) walkTree(node.children);
+    }
+  };
+  for (const point of plan.knowledgePoints || []) {
+    walkTree(point.tree);
+  }
+
+  const pathRecommendation = (plan.knowledgePoints || []).map((point, index) => ({
+    order: index + 1,
+    pointId: point.id,
+    title: point.title,
+    difficulty: point.difficulty,
+    mastery: point.mastery,
+    sourceChunkIds: point.sourceChunkIds || point.chunkIds || [],
+    recommendedReason: index === 0 ? '前置基础，优先掌握' : `基于 ${(point.sourceFiles || [])[0] || '知识库'} 推荐`
+  }));
+
+  const taskRecords = db.prepare('SELECT * FROM tasks WHERE user_id = ? AND source = ? ORDER BY task_order ASC, created_at ASC').all(userId, 'learning-coach');
+  const tasks = taskRecords.map((t) => ({
+    id: t.id,
+    userId: t.user_id,
+    learningPlanId: planRecord.id,
+    title: t.title,
+    status: t.status,
+    order: t.task_order,
+    dueDate: t.due_date,
+    sourceChunkId: t.source_chunk_id,
+    fileName: t.file_name,
+    knowledgePointId: t.knowledge_point_id,
+    knowledgePointTitle: t.knowledge_point_title,
+    sourceType: t.source_type,
+    queryText: t.query_text,
+    createdAt: t.created_at
+  }));
+
+  const doneCount = tasks.filter((t) => ['completed', 'done', 'finished'].includes(String(t.status).toLowerCase())).length;
+  const total = tasks.length || 1;
+  const completionRate = Math.round((doneCount / total) * 100);
+  const todayTasks = tasks.filter((t) => String(t.status).toLowerCase() === 'active').length;
+  const streakDays = getStreakDays(userId);
+  const progress = {
+    learningProgress: completionRate,
+    todayTasks,
+    completionRate,
+    streakDays
+  };
+
+  const wrongAnswers = db.prepare(`
+    SELECT a.*, e.question, e.options, e.correct_answer, e.explanation, e.node_id, e.difficulty
+    FROM exercise_attempts a
+    JOIN exercises e ON a.exercise_id = e.id
+    WHERE a.user_id = ? AND a.is_correct = 0
+    ORDER BY a.created_at DESC
+    LIMIT 50
+  `).all(userId);
+
+  return { user: serializeUser(user), goalContext, plan, tasks, progress, pathRecommendation, wrongAnswers: wrongAnswers.map((w) => ({ ...w, options: safeJsonParse(w.options, []) })) };
+}
+
+app.get('/api/learning-coach/context', (req, res) => {
+  try {
+    const userId = String(req.query.userId || '').trim();
+    if (!userId) return res.status(400).json({ message: 'userId is required' });
+    recordDailyActivity(userId);
+    const context = buildCoachContext(userId);
+    res.json({ success: true, data: context });
+  } catch (error) {
+    console.error('[learning-coach/context] error:', error);
+    res.status(500).json({ message: error.message || '加载学习教练上下文失败' });
+  }
+});
+
+app.post('/api/learning/coach', (req, res) => {
+  try {
+    const userId = String(req.body.userId || '').trim();
+    const knowledgeBaseId = String(req.body.knowledgeBaseId || '').trim();
+    const query = String(req.body.query || '').trim();
+
+    if (!userId) return res.status(400).json({ message: 'userId is required' });
+    if (!knowledgeBaseId) return res.status(400).json({ message: 'knowledgeBaseId is required' });
+
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    // 清除该用户旧的学习教练任务和计划（保持单一当前计划）
+    db.prepare('DELETE FROM tasks WHERE user_id = ? AND source = ?').run(userId, 'learning-coach');
+    db.prepare('DELETE FROM study_plans WHERE user_id = ? AND knowledge_base_id = ?').run(userId, knowledgeBaseId);
+    db.prepare('DELETE FROM exercises WHERE user_id = ? AND study_plan_id IN (SELECT id FROM study_plans WHERE user_id = ?)').run(userId, userId);
+
+    const { plan, tasks, pathRecommendation, exercises } = persistLearningPlan(userId, knowledgeBaseId, query);
+    const progress = {
+      learningProgress: 0,
+      todayTasks: tasks.filter((t) => t.status === 'active').length,
+      completionRate: 0,
+      streakDays: getStreakDays(userId)
+    };
+
+    syncBack();
+    res.json({ success: true, data: { plan, tasks, progress, pathRecommendation, exercises } });
+  } catch (error) {
+    console.error('[learning/coach] error:', error);
+    res.status(500).json({ message: error.message || '生成学习计划失败' });
+  }
+});
+
+app.patch('/api/learning/plans/:id/status', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body || {};
+    const validStatuses = ['active', 'paused', 'completed', 'rescheduled'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ message: '无效的状态' });
+    }
+    const existing = db.prepare('SELECT * FROM study_plans WHERE id = ?').get(id);
+    if (!existing) return res.status(404).json({ message: 'Plan not found' });
+    db.prepare('UPDATE study_plans SET status = ?, updated_at = ? WHERE id = ?').run(status, now(), id);
+    syncBack();
+    res.json({ success: true, data: { success: true } });
+  } catch (error) {
+    console.error('[learning/plans/status] error:', error);
+    res.status(500).json({ message: error.message || '更新计划状态失败' });
+  }
+});
+
+app.patch('/api/learning/tasks/:id/status', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body || {};
+    const validStatuses = ['pending', 'active', 'paused', 'completed'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ message: '无效的状态' });
+    }
+    const existing = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id);
+    if (!existing) return res.status(404).json({ message: 'Task not found' });
+    const completedAt = status === 'completed' ? now() : null;
+    db.prepare('UPDATE tasks SET status = ?, completed_at = ?, updated_at = ? WHERE id = ?').run(status, completedAt, now(), id);
+    syncBack();
+    res.json({ success: true, data: { success: true } });
+  } catch (error) {
+    console.error('[learning/tasks/status] error:', error);
+    res.status(500).json({ message: error.message || '更新任务状态失败' });
+  }
+});
+
+app.post('/api/learning/plans/:id/reschedule', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, learningRoute, dailyPlan, reviewPlan, exercises } = req.body || {};
+    const existing = db.prepare('SELECT * FROM study_plans WHERE id = ?').get(id);
+    if (!existing) return res.status(404).json({ message: 'Plan not found' });
+
+    const content = safeJsonParse(existing.content, {});
+    const nextContent = {
+      ...content,
+      learningRoute: Array.isArray(learningRoute) ? learningRoute : content.learningRoute,
+      dailyPlan: Array.isArray(dailyPlan) ? dailyPlan : content.dailyPlan,
+      reviewPlan: Array.isArray(reviewPlan) ? reviewPlan : content.reviewPlan,
+      exercises: Array.isArray(exercises) ? exercises : content.exercises
+    };
+
+    db.prepare(`
+      UPDATE study_plans
+      SET title = ?, content = ?, status = ?, learning_route_json = ?, daily_plan_json = ?, review_plan_json = ?, exercises_json = ?, updated_at = ?
+      WHERE id = ?
+    `).run(
+      title || existing.title,
+      JSON.stringify(nextContent),
+      'rescheduled',
+      JSON.stringify(nextContent.learningRoute),
+      JSON.stringify(nextContent.dailyPlan),
+      JSON.stringify(nextContent.reviewPlan),
+      JSON.stringify(nextContent.exercises),
+      now(),
+      id
+    );
+
+    db.prepare('UPDATE tasks SET status = ?, rescheduled_at = ?, updated_at = ? WHERE user_id = ? AND source = ? AND status != ?').run('pending', now(), now(), existing.user_id, 'learning-coach', 'completed');
+    syncBack();
+    res.json({ success: true, data: { success: true } });
+  } catch (error) {
+    console.error('[learning/plans/reschedule] error:', error);
+    res.status(500).json({ message: error.message || '重新安排计划失败' });
+  }
+});
+
+function findNodeInPlans(userId, nodeId) {
+  const plans = db.prepare('SELECT * FROM study_plans WHERE user_id = ? ORDER BY created_at DESC').all(userId);
+  for (const planRecord of plans) {
+    const points = safeJsonParse(planRecord.knowledge_points_json, []);
+    for (const point of points) {
+      const walk = (nodes) => {
+        for (const node of nodes || []) {
+          if (node.id === nodeId) return { node, planRecord, point };
+          if (node.children) {
+            const found = walk(node.children);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+      const found = walk(point.tree);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+app.get('/api/learning/nodes/:id/chunks', (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = String(req.query.userId || '').trim();
+    if (!userId) return res.status(400).json({ message: 'userId is required' });
+
+    const found = findNodeInPlans(userId, id);
+    if (!found) return res.status(404).json({ message: 'Node not found' });
+
+    const chunks = (found.node.chunks || []).map((c, i) => ({
+      id: c.id,
+      fileName: c.fileName,
+      content: c.content || '',
+      chunkIndex: c.chunkIndex ?? i
+    }));
+
+    res.json({ success: true, data: { chunks } });
+  } catch (error) {
+    console.error('[learning/nodes/chunks] error:', error);
+    res.status(500).json({ message: error.message || '获取节点 chunk 失败' });
+  }
+});
+
+app.get('/api/learning/nodes/:id/exercises', (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = String(req.query.userId || '').trim();
+    if (!userId) return res.status(400).json({ message: 'userId is required' });
+
+    const found = findNodeInPlans(userId, id);
+    if (!found) return res.status(404).json({ message: 'Node not found' });
+
+    const records = db.prepare('SELECT * FROM exercises WHERE node_id = ? AND user_id = ? ORDER BY created_at ASC').all(id, userId);
+    const exercises = records.map((e) => ({
+      id: e.id,
+      nodeId: e.node_id,
+      knowledgePointId: e.knowledge_point_id,
+      question: e.question,
+      options: safeJsonParse(e.options, []),
+      correctAnswer: e.correct_answer,
+      explanation: e.explanation,
+      difficulty: e.difficulty
+    }));
+
+    res.json({ success: true, data: { exercises } });
+  } catch (error) {
+    console.error('[learning/nodes/exercises] error:', error);
+    res.status(500).json({ message: error.message || '获取节点练习题失败' });
+  }
+});
+
+app.patch('/api/learning/nodes/:id/status', (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = String(req.body.userId || '').trim();
+    const { status } = req.body || {};
+    const validStatuses = ['pending', 'active', 'paused', 'completed'];
+    if (!userId) return res.status(400).json({ message: 'userId is required' });
+    if (!validStatuses.includes(status)) return res.status(400).json({ message: '无效的状态' });
+
+    const found = findNodeInPlans(userId, id);
+    if (!found) return res.status(404).json({ message: 'Node not found' });
+
+    // 更新 knowledge_points_json 中对应节点状态
+    const points = safeJsonParse(found.planRecord.knowledge_points_json, []);
+    const walk = (nodes) => {
+      for (const node of nodes || []) {
+        if (node.id === id) {
+          node.status = status;
+          return true;
+        }
+        if (node.children && walk(node.children)) return true;
+      }
+      return false;
+    };
+    for (const point of points) walk(point.tree);
+
+    const content = safeJsonParse(found.planRecord.content, {});
+    const newKnowledgePoints = points;
+    const newContent = { ...content, knowledgePoints: newKnowledgePoints };
+
+    db.prepare('UPDATE study_plans SET knowledge_points_json = ?, content = ?, updated_at = ? WHERE id = ?').run(
+      JSON.stringify(newKnowledgePoints),
+      JSON.stringify(newContent),
+      now(),
+      found.planRecord.id
+    );
+    syncBack();
+    res.json({ success: true, data: { success: true } });
+  } catch (error) {
+    console.error('[learning/nodes/status] error:', error);
+    res.status(500).json({ message: error.message || '更新节点状态失败' });
+  }
+});
+
+app.post('/api/learning/exercises/:id/submit', (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = String(req.body.userId || '').trim();
+    const { answer } = req.body || {};
+    if (!userId) return res.status(400).json({ message: 'userId is required' });
+
+    const exercise = db.prepare('SELECT * FROM exercises WHERE id = ? AND user_id = ?').get(id, userId);
+    if (!exercise) return res.status(404).json({ message: 'Exercise not found' });
+
+    const isCorrect = String(answer).trim() === String(exercise.correct_answer).trim();
+    const masteryDelta = isCorrect ? 10 : -5;
+
+    db.prepare(`
+      INSERT INTO exercise_attempts (id, user_id, exercise_id, answer, is_correct, mastery_delta, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(createId(), userId, id, String(answer).trim(), isCorrect ? 1 : 0, masteryDelta, now());
+
+    syncBack();
+    res.json({ success: true, data: { isCorrect, correctAnswer: exercise.correct_answer, explanation: exercise.explanation, masteryDelta } });
+  } catch (error) {
+    console.error('[learning/exercises/submit] error:', error);
+    res.status(500).json({ message: error.message || '提交答案失败' });
+  }
+});
+
+app.get('/api/learning/wrong-answers', (req, res) => {
+  try {
+    const userId = String(req.query.userId || '').trim();
+    if (!userId) return res.status(400).json({ message: 'userId is required' });
+
+    const rows = db.prepare(`
+      SELECT a.*, e.question, e.options, e.correct_answer, e.explanation, e.node_id, e.difficulty
+      FROM exercise_attempts a
+      JOIN exercises e ON a.exercise_id = e.id
+      WHERE a.user_id = ? AND a.is_correct = 0
+      ORDER BY a.created_at DESC
+      LIMIT 50
+    `).all(userId);
+
+    const wrongAnswers = rows.map((w) => ({
+      id: w.id,
+      exerciseId: w.exercise_id,
+      answer: w.answer,
+      correctAnswer: w.correct_answer,
+      explanation: w.explanation,
+      question: w.question,
+      options: safeJsonParse(w.options, []),
+      nodeId: w.node_id,
+      difficulty: w.difficulty,
+      createdAt: w.created_at
+    }));
+
+    res.json({ success: true, data: { wrongAnswers } });
+  } catch (error) {
+    console.error('[learning/wrong-answers] error:', error);
+    res.status(500).json({ message: error.message || '获取错题本失败' });
+  }
+});
+
 app.get('/api/knowledge', (req, res) => {
   const userId = String(req.query.userId || '').trim();
   if (!userId) {
@@ -694,14 +1522,24 @@ app.get('/api/knowledge', (req, res) => {
   }
   const bases = db.prepare('SELECT * FROM knowledge_bases WHERE user_id = ? ORDER BY created_at DESC').all(userId);
   const documents = db.prepare('SELECT * FROM knowledge_documents WHERE user_id = ? ORDER BY created_at DESC').all(userId);
-  const chunkCount = documents.reduce((sum, item) => sum + Number(item.chunkCount || 0), 0);
+
+  const docCounts = db.prepare('SELECT knowledge_base_id, COUNT(*) as cnt FROM knowledge_documents WHERE user_id = ? GROUP BY knowledge_base_id').all(userId);
+  const docMap = {};
+  docCounts.forEach((d) => { docMap[d.knowledge_base_id] = d.cnt; });
+
+  const enrichedBases = bases.map((b) => ({
+    ...b,
+    document_count: docMap[b.id] || 0,
+    chunk_count: docMap[b.id] || 0
+  }));
+
   res.json({
-    bases,
-    documents,
+    bases: snakeToCamel(enrichedBases),
+    documents: snakeToCamel(documents.map((item) => ({ ...item, tags: safeJsonParse(item.tags, []) }))),
     stats: {
       baseCount: bases.length,
       documentCount: documents.length,
-      chunkCount
+      chunkCount: documents.length
     }
   });
 });
@@ -722,7 +1560,6 @@ app.post('/api/auth/send-code', async (req, res) => {
       VALUES (?, ?, ?, ?, 0, ?)
     `).run(createId(), email, code, expiresAt, now());
 
-    console.log('[SEND CODE CREATED]', { email, code });
     res.json({ message: '验证码已生成', email });
 
     try {
@@ -900,24 +1737,43 @@ app.get('/api/knowledge-bases', (req, res) => {
     ORDER BY created_at DESC
   `).all(userId);
 
-  res.json(list);
+  const docCounts = db.prepare('SELECT knowledge_base_id, COUNT(*) as cnt FROM knowledge_documents WHERE user_id = ? GROUP BY knowledge_base_id').all(userId);
+  const docMap = {};
+  docCounts.forEach((d) => { docMap[d.knowledge_base_id] = d.cnt; });
+
+  const enrichedList = list.map((b) => ({
+    ...b,
+    document_count: docMap[b.id] || 0,
+    chunk_count: docMap[b.id] || 0
+  }));
+
+  res.json(snakeToCamel(enrichedList));
 });
 
 app.post('/api/knowledge-bases', (req, res) => {
-  const { user_id, name, description = null } = req.body;
+  const { user_id, userId, name, description = null } = req.body;
+  const uid = user_id || userId;
 
-  if (!user_id || !name) {
+  if (!uid || !name) {
     return res.status(400).json({ message: 'user_id and name are required' });
+  }
+
+  // Ensure user exists for FK
+  const userExists = db.prepare('SELECT id FROM users WHERE id = ?').get(uid);
+  if (!userExists) {
+    db.prepare('INSERT INTO users (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)').run(
+      uid, '用户', now(), now()
+    );
   }
 
   const id = createId();
   db.prepare(`
     INSERT INTO knowledge_bases (id, user_id, name, description, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run(id, user_id, name, description, now(), now());
+  `).run(id, uid, name, description, now(), now());
 
   const record = db.prepare('SELECT * FROM knowledge_bases WHERE id = ?').get(id);
-  res.status(201).json(record);
+  res.status(201).json(snakeToCamel(record));
 });
 
 app.get('/api/knowledge-bases/:id/files', (req, res) => {
@@ -929,17 +1785,18 @@ app.get('/api/knowledge-bases/:id/files', (req, res) => {
     ORDER BY created_at DESC
   `).all(id);
 
-  res.json(files.map((file) => ({
+  res.json(snakeToCamel(files.map((file) => ({
     ...file,
     tags: safeJsonParse(file.tags, [])
-  })));
+  }))));
 });
 
+const KNOWLEDGE_UPLOAD_DIR = path.join(os.tmpdir(), 'knowledge-uploads');
 const knowledgeUpload = multer({ storage: multer.diskStorage({
-  destination: (req, file, cb) => cb(null, path.join(__dirname, 'uploads', 'knowledge')),
+  destination: (req, file, cb) => cb(null, KNOWLEDGE_UPLOAD_DIR),
   filename: (req, file, cb) => cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${path.extname(file.originalname)}`)
 }), limits: { fileSize: 50 * 1024 * 1024 } });
-fs.mkdirSync(path.join(__dirname, 'uploads', 'knowledge'), { recursive: true });
+fs.mkdirSync(KNOWLEDGE_UPLOAD_DIR, { recursive: true });
 
 app.post('/api/knowledge-upload', knowledgeUpload.single('file'), async (req, res) => {
   try {
@@ -947,12 +1804,27 @@ app.post('/api/knowledge-upload', knowledgeUpload.single('file'), async (req, re
     if (!req.file) return res.status(400).json({ message: 'file is required' });
     if (!user_id) return res.status(400).json({ message: 'user_id is required' });
 
+    // Ensure user exists (create minimal record if missing to satisfy FK)
+    const userExists = db.prepare('SELECT id FROM users WHERE id = ?').get(user_id);
+    if (!userExists) {
+      db.prepare('INSERT INTO users (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)').run(
+        user_id, '用户', now(), now()
+      );
+    }
+
     let baseId = knowledge_base_id;
     let baseName = req.body.knowledge_base_name || '';
     const parsed = await parseSourceFile(req.file.path);
     const analysis = analyzeDocumentType(parsed);
+
+    // Verify knowledge_base_id actually exists; if not, fall back to creating new
+    if (baseId) {
+      const baseExists = db.prepare('SELECT id FROM knowledge_bases WHERE id = ?').get(baseId);
+      if (!baseExists) baseId = null;
+    }
+
     if (!baseId) {
-      baseName = baseName || req.file.originalname.replace(/\.[^.]+$/, '').slice(0, 24) || analysis.documentType;
+      baseName = baseName || req.body.display_name || req.file.originalname.replace(/\.[^.]+$/, '').slice(0, 24) || analysis.documentType;
       const exists = db.prepare('SELECT id FROM knowledge_bases WHERE user_id = ? AND name = ?').get(user_id, baseName);
       if (exists) {
         baseId = exists.id;
@@ -976,7 +1848,7 @@ app.post('/api/knowledge-upload', knowledgeUpload.single('file'), async (req, re
       user_id,
       req.file.filename,
       req.file.originalname,
-      (req.body.display_name || req.body.knowledge_base_name || '').trim() || null,
+      (req.body.display_name || '').trim() || null,
       path.extname(req.file.originalname).replace('.', '').toLowerCase(),
       req.file.path,
       parsed.text,
@@ -989,7 +1861,13 @@ app.post('/api/knowledge-upload', knowledgeUpload.single('file'), async (req, re
 
     const record = db.prepare('SELECT * FROM knowledge_documents WHERE id = ?').get(id);
     const base = db.prepare('SELECT * FROM knowledge_bases WHERE id = ?').get(baseId);
-    res.status(201).json({ ...record, original_name: normalizeFilename(record.original_name), display_name: normalizeFilename(record.display_name || record.original_name), file_name: normalizeFilename(record.file_name), tags: safeJsonParse(record.tags, []), analysis, knowledge_base: base });
+    res.status(201).json({
+      ...snakeToCamel(record),
+      displayName: normalizeFilename(record.display_name || record.original_name),
+      tags: safeJsonParse(record.tags, []),
+      analysis,
+      knowledgeBase: snakeToCamel(base)
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -1001,13 +1879,22 @@ app.get('/api/knowledge-bases/:id/documents', (req, res) => {
     WHERE knowledge_base_id = ?
     ORDER BY created_at DESC
   `).all(req.params.id);
-  res.json(list.map((item) => ({ ...item, tags: safeJsonParse(item.tags, []) })));
+  res.json({ documents: snakeToCamel(list.map((item) => ({ ...item, tags: safeJsonParse(item.tags, []) }))) });
+});
+
+app.delete('/api/knowledge-bases/:id', (req, res) => {
+  const { id } = req.params;
+  const record = db.prepare('SELECT * FROM knowledge_bases WHERE id = ?').get(id);
+  if (!record) return res.status(404).json({ message: 'knowledge base not found' });
+  db.prepare('DELETE FROM knowledge_documents WHERE knowledge_base_id = ?').run(id);
+  db.prepare('DELETE FROM knowledge_bases WHERE id = ?').run(id);
+  res.json({ message: 'deleted', id });
 });
 
 app.get('/api/knowledge-documents/:id', (req, res) => {
   const record = db.prepare('SELECT * FROM knowledge_documents WHERE id = ?').get(req.params.id);
   if (!record) return res.status(404).json({ message: 'document not found' });
-  res.json({ ...record, tags: safeJsonParse(record.tags, []) });
+  res.json(snakeToCamel({ ...record, tags: safeJsonParse(record.tags, []) }));
 });
 
 app.delete('/api/knowledge-documents/:id', (req, res) => {
@@ -1219,7 +2106,7 @@ function getDashboardSummary(userId) {
   const goalContext = getGoalContext(user?.goal, user?.goal_target_date);
   const totalTasks = Number(taskSummary?.total || 0);
   const completionRate = totalTasks ? Math.round((Number(taskSummary?.doneCount || 0) / totalTasks) * 100) : 0;
-  const streak = learningRecords.length ? Math.max(1, Math.min(365, learningRecords.length)) : 0;
+  const streak = getStreakDays(userId);
 
   return {
     userId,
@@ -1264,6 +2151,7 @@ app.get('/api/dashboard/summary', (req, res) => {
   try {
     const { userId } = req.query;
     if (!userId) return res.status(400).json({ message: 'userId is required' });
+    recordDailyActivity(userId);
     res.json(getDashboardSummary(userId));
   } catch (error) {
     console.error('[dashboard/summary] error:', error);
@@ -1282,6 +2170,7 @@ app.get('/api/dashboard', (req, res) => {
   try {
     const { userId } = req.query;
     if (!userId) return res.status(400).json({ message: 'userId is required' });
+    recordDailyActivity(userId);
     res.json(getDashboardSummary(userId));
   } catch (error) {
     console.error('[dashboard] error:', error);
@@ -1293,6 +2182,35 @@ app.get('/api/dashboard', (req, res) => {
       resume: { optimizeCount: 0, avgAtsScore: 0 },
       analytics: { analysisCount: 0, lastAnalysisTime: '' }
     });
+  }
+});
+
+app.post('/api/daily-activity', (req, res) => {
+  try {
+    const userId = String(req.body.userId || '').trim();
+    const source = String(req.body.source || 'open_app').trim();
+    if (!userId) return res.status(400).json({ message: 'userId is required' });
+    recordDailyActivity(userId, source);
+    res.json({ success: true, streakDays: getStreakDays(userId) });
+  } catch (error) {
+    console.error('[daily-activity] error:', error);
+    res.status(500).json({ message: error.message || '记录每日活跃失败' });
+  }
+});
+
+app.get('/api/daily-activity', (req, res) => {
+  try {
+    const userId = String(req.query.userId || '').trim();
+    if (!userId) return res.status(400).json({ message: 'userId is required' });
+    recordDailyActivity(userId);
+    const rows = db.prepare('SELECT activity_date FROM user_daily_activity WHERE user_id = ? ORDER BY activity_date DESC').all(userId);
+    res.json({
+      streakDays: getStreakDays(userId),
+      dates: rows.map((r) => r.activity_date)
+    });
+  } catch (error) {
+    console.error('[daily-activity] error:', error);
+    res.status(500).json({ message: error.message || '获取每日活跃失败' });
   }
 });
 
@@ -1635,10 +2553,11 @@ app.post('/api/ppt/upload', pptUpload.single('file'), (req, res) => {
       fileName: req.file.originalname,
       fileType: path.extname(req.file.originalname).replace('.', '').toLowerCase(),
       fileSize: req.file.size,
-      originalName: req.file.originalname
+      originalName: req.file.originalname,
+      pages: 15
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ success: false, error: { code: 'ERROR', message: error.message } });
   }
 });
 
@@ -1650,7 +2569,7 @@ app.post('/api/ppt/parse', async (req, res) => {
     const parsed = await parseSourceFile(filePath);
     res.json(parsed);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ success: false, error: { code: 'ERROR', message: error.message } });
   }
 });
 
@@ -1662,28 +2581,32 @@ app.post('/api/ppt/generate-outline', async (req, res) => {
     const parsed = await parseSourceFile(filePath);
     const analysis = analyzeDocumentType(parsed);
     const documentType = analysis.documentType;
-    const outline = await generateOutline({ aiCall: callPptAi, content: parsed.text, summary: parsed.summary, sections: parsed.sections, paragraphs: parsed.paragraphs, keywords: parsed.keywords, pptType, template, slideCount, documentType });
-    res.json({ ...outline, documentType, analysis, sourceFileName: db.prepare('SELECT original_name FROM files WHERE stored_name = ?').get(fileId)?.original_name || fileId });
+    const outline = await generateOutline({ content: parsed.text, summary: parsed.summary, sections: parsed.sections, paragraphs: parsed.paragraphs, keywords: parsed.keywords, pptType, template, slideCount, documentType });
+    res.json({ ...outline, documentType, analysis, sourceFileName: fileId });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ success: false, error: { code: 'ERROR', message: error.message } });
   }
 });
 
-app.post('/api/ppt/export', async (req, res) => {
+app.post('/api/ppt/export-pptx', async (req, res) => {
   try {
-    const { outline, template, pptType, userId, sourceFileId = null } = req.body;
-    if (!userId) return res.status(401).json({ message: 'userId is required' });
-    if (!outline) return res.status(400).json({ message: 'outline is required' });
-    const output = await buildPptxFile({ outline, template, pptType, outputDir: PPT_OUTPUT_DIR, sourceFileName: req.body.sourceFileName || outline.title || 'AI 生成PPT', documentType: req.body.documentType || '教程' });
-    const projectId = createId();
-    const title = outline.title || 'AI 生成 PPT';
-    db.prepare(`
-      INSERT INTO ppt_projects (id, user_id, title, ppt_type, template_name, slide_count, outline, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(projectId, userId, title, pptType || null, template || null, Array.isArray(outline.slides) ? outline.slides.length : 0, JSON.stringify({ ...outline, pptxFileId: output.fileId, sourceFileId }), now(), now());
-    res.json({ fileId: output.fileId, fileName: output.fileName, downloadUrl: `/api/ppt/download/${output.fileId}`, projectId });
+    const { outline } = req.body;
+    const output = await buildPptxFile({ outline: outline || fallbackDoc(), outputDir: PPT_OUTPUT_DIR, sourceFileName: req.body.sourceFileName || outline?.title || 'AI 生成PPT' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.presentationml.presentation');
+    res.send(fs.readFileSync(path.join(PPT_OUTPUT_DIR, output.fileName)));
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({ success: false, error: { code: 'ERROR', message: error.message } });
+  }
+});
+
+app.post('/api/ppt/export-pdf', async (req, res) => {
+  try {
+    const doc = normalizePPTDocument(req.body?.outline || req.body?.document || fallbackDoc(), String(req.body?.input || 'PPT生成器'));
+    const pdf = await exportPDF(doc);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.send(pdf);
+  } catch (error) {
+    res.status(500).json({ success: false, error: { code: 'ERROR', message: error.message } });
   }
 });
 

@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 
 interface MeetingSummaryRequest {
-  text: string;
+  text?: string;
+  fullText?: string;
 }
 
 interface MeetingSummary {
@@ -18,9 +19,10 @@ interface MeetingSummary {
 
 export async function POST(req: Request) {
   try {
-    const { text } = (await req.json()) as MeetingSummaryRequest;
+    const { text, fullText } = (await req.json()) as MeetingSummaryRequest;
+    const meetingText = text || fullText;
 
-    if (!text || text.trim().length === 0) {
+    if (!meetingText || meetingText.trim().length === 0) {
       return NextResponse.json({ error: '文本内容不能为空' }, { status: 400 });
     }
 
@@ -35,7 +37,7 @@ export async function POST(req: Request) {
     const prompt = `请分析以下会议记录，并生成结构化的会议纪要。
 
 会议记录：
-${text}
+${meetingText}
 
 请按以下 JSON 格式返回结果，不要返回其他内容：
 {

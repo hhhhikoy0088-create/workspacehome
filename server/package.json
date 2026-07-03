@@ -23,5 +23,8 @@
     "pdf-parse": "^2.4.5",
     "pptxgenjs": "^4.0.1",
     "uuid": "^14.0.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.22.5"
   }
 }

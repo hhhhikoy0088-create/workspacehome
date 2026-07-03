@@ -56,8 +56,8 @@ export function ExportToolbar({
 
     let html = `<html><head><meta charset="utf-8"><style>
       body { font-family: Arial, sans-serif; color: #333; line-height: 1.6; }
-      h1 { color: #1a1a1a; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
-      h2 { color: #007bff; margin-top: 20px; }
+      h1 { color: #1a1a1a; border-bottom: 2px solid #8b5cf6; padding-bottom: 10px; }
+      h2 { color: #8b5cf6; margin-top: 20px; }
       table { border-collapse: collapse; width: 100%; margin: 10px 0; }
       th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
       th { background-color: #f8f9fa; }
@@ -144,34 +144,40 @@ export function ExportToolbar({
   };
 
   return (
-    <div className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900/80 p-6 shadow-panel backdrop-blur-2xl gap-4 flex-wrap">
-      <div className="text-sm text-zinc-400">
-        ✅ 会议已处理完成 • 全文 {transcript.length} 字符
+    <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-zinc-800/80 bg-zinc-900/60 p-5 shadow-[0_8px_32px_rgba(0,0,0,0.35)] backdrop-blur-xl">
+      <div className="flex items-center gap-2 text-sm text-zinc-400">
+        <span className="flex h-6 w-6 items-center justify-center rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-400">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </span>
+        会议已处理完成 · 全文 {transcript.length} 字符
       </div>
 
-      <div className="flex items-center gap-3 flex-wrap">
+      <div className="flex flex-wrap items-center gap-3">
         <button
           onClick={handleExportMarkdown}
           disabled={disabled || exporting || !transcript}
-          className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="inline-flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-950/60 px-4 py-2 text-sm font-medium text-zinc-200 transition hover:border-zinc-700 hover:bg-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          📝 {exporting ? '导出中...' : '导出 Markdown'}
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          {exporting ? '导出中...' : '导出 Markdown'}
         </button>
 
         <button
           onClick={handleExportWord}
           disabled={disabled || exporting || !transcript}
-          className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="inline-flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-950/60 px-4 py-2 text-sm font-medium text-zinc-200 transition hover:border-zinc-700 hover:bg-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          📄 {exporting ? '导出中...' : '导出 Word'}
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          {exporting ? '导出中...' : '导出 Word'}
         </button>
 
         {onReset && (
           <button
             onClick={onReset}
-            className="flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-800"
+            className="inline-flex items-center gap-2 rounded-xl border border-violet-500/30 bg-violet-500/10 px-4 py-2 text-sm font-medium text-violet-300 transition hover:border-violet-500/50 hover:bg-violet-500/20"
           >
-            🔄 新建会议
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+            新建会议
           </button>
         )}
       </div>

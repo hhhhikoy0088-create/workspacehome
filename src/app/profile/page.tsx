@@ -6,6 +6,7 @@ import { WorkspaceShell } from '@/components/workspace-shell';
 import request from '@/api/request';
 import { useAuthStore } from '@/components/auth-provider';
 import type { DashboardSummary } from '@/types/dashboard';
+import Link from 'next/link';
 
 type ProfileUser = {
   userId: string;
@@ -73,6 +74,16 @@ const fadeIn = {
   transition: { duration: 0.35, ease: [0.16, 1, 0.3, 1] as const }
 };
 
+const staggerContainer = {
+  hidden: { opacity: 0 },
+  show: { opacity: 1, transition: { staggerChildren: 0.06 } }
+};
+
+const staggerItem = {
+  hidden: { opacity: 0, y: 16 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.4, ease: 'easeOut' as const } }
+};
+
 function emptyEditableProfile(user?: ProfileEditableSource): EditableProfile {
   return {
     name: user?.name || '',
@@ -108,6 +119,84 @@ const emptyDashboard: DashboardSummary = {
   resume: { optimizeCount: 0, avgAtsScore: 0 },
   analytics: { analysisCount: 0, lastAnalysisTime: '' }
 };
+
+function CircularProgress({ value, label, sub }: { value: number; label: string; sub?: string }) {
+  const safe = Math.max(0, Math.min(100, value || 0));
+  const circumference = 2 * Math.PI * 38;
+  const offset = circumference - (safe / 100) * circumference;
+  return (
+    <div className="flex flex-col items-center justify-center">
+      <div className="relative flex h-28 w-28 items-center justify-center">
+        <svg className="h-full w-full -rotate-90" viewBox="0 0 88 88">
+          <circle cx="44" cy="44" r="38" stroke="rgba(255,255,255,0.12)" strokeWidth="8" fill="none" />
+          <circle
+            cx="44"
+            cy="44"
+            r="38"
+            stroke="url(#purpleGradient)"
+            strokeWidth="8"
+            fill="none"
+            strokeLinecap="round"
+            strokeDasharray={circumference}
+            strokeDashoffset={offset}
+          />
+          <defs>
+            <linearGradient id="purpleGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#8b5cf6" />
+              <stop offset="100%" stopColor="#d8b4fe" />
+            </linearGradient>
+          </defs>
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-2xl font-bold text-white">{safe}</span>
+          <span className="text-[10px] text-purple-200">Total</span>
+        </div>
+      </div>
+      <p className="mt-3 text-sm font-medium text-slate-800">{label}</p>
+      {sub ? <p className="text-xs text-slate-400">{sub}</p> : null}
+    </div>
+  );
+}
+
+function LineChart({ data }: { data: number[] }) {
+  const max = Math.max(10, ...data);
+  const width = 280;
+  const height = 100;
+  const padding = 8;
+  const points = data.map((v, i) => {
+    const x = padding + (i / (data.length - 1)) * (width - padding * 2);
+    const y = height - padding - (v / max) * (height - padding * 2);
+    return `${x},${y}`;
+  }).join(' ');
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} className="h-32 w-full" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="lineFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="rgba(139,92,246,0.25)" />
+          <stop offset="100%" stopColor="rgba(139,92,246,0)" />
+        </linearGradient>
+      </defs>
+      <polygon
+        points={`${padding},${height - padding} ${points} ${width - padding},${height - padding}`}
+        fill="url(#lineFill)"
+      />
+      <polyline
+        points={points}
+        fill="none"
+        stroke="#8b5cf6"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {data.map((v, i) => {
+        const x = padding + (i / (data.length - 1)) * (width - padding * 2);
+        const y = height - padding - (v / max) * (height - padding * 2);
+        return <circle key={i} cx={x} cy={y} r="3" fill="#fff" stroke="#8b5cf6" strokeWidth="2" />;
+      })}
+    </svg>
+  );
+}
 
 export default function ProfilePage() {
   const { user, isLogin } = useAuthStore();
@@ -157,20 +246,14 @@ export default function ProfilePage() {
     return `你目前主要专注 ${goal}，身份是 ${identity}，场景聚焦于 ${profession}。最近常使用 ${knowledgeTag} 进行学习与整理，整体成长状态稳定。`;
   }, [dashboard?.knowledge?.baseCount, dashboard?.profile?.goal, dashboard?.profile?.identity, dashboard?.profile?.profession, displayUser?.goal, displayUser?.identity, displayUser?.profession, isAuthenticated]);
 
-  const loadingSkeleton = (
-    <div className="grid gap-4 lg:grid-cols-2">
-      {Array.from({ length: 6 }).map((_, index) => (
-        <div key={`profile-skeleton-${index}`} className="h-40 animate-pulse rounded-2xl border border-zinc-800 bg-zinc-900/50" />
-      ))}
-    </div>
-  );
-
   const loadData = async () => {
     setLoading(true);
     setErrors([]);
-    const [profileRes, dashboardRes] = await Promise.allSettled([
+    const [profileRes, dashboardRes, knowledgeRes, learningRes] = await Promise.allSettled([
       request.get('/profile'),
-      request.get('/dashboard?userId=' + currentUserId)
+      request.get('/dashboard?userId=' + currentUserId),
+      request.get('/knowledge?userId=' + encodeURIComponent(currentUserId)),
+      request.get('/learning-coach/context?userId=' + encodeURIComponent(currentUserId))
     ]);
 
     const nextProfile = profileRes.status === 'fulfilled' && profileRes.value ? profileRes.value : null;
@@ -179,8 +262,8 @@ export default function ProfilePage() {
 
     setProfile(authenticated ? nextProfile : null);
     setDashboard(authenticated ? nextDashboard : emptyDashboard);
-    setKnowledge(null);
-    setLearningCoach(null);
+    setKnowledge(knowledgeRes.status === 'fulfilled' && knowledgeRes.value ? knowledgeRes.value : null);
+    setLearningCoach(learningRes.status === 'fulfilled' && learningRes.value ? learningRes.value : null);
     setPptProjects([]);
     setMeetingNotes([]);
     setDraft(emptyEditableProfile(authenticated ? { name: nextProfile?.user?.name || user?.name, nickname: nextProfile?.user?.nickname || user?.nickname, identity: nextProfile?.user?.identity || user?.identity, profession: nextProfile?.user?.profession || user?.profession, goal: nextProfile?.user?.goal || user?.goal, goalTargetDate: nextProfile?.user?.goalTargetDate || user?.goalTargetDate } : undefined));
@@ -253,7 +336,7 @@ export default function ProfilePage() {
       setProfile(result);
       setDraft(emptyEditableProfile(result.user || displayUser || undefined));
       setModal({ open: false, title: '编辑资料' });
-      setToast({ type: 'success', message: '✓ 保存成功' });
+      setToast({ type: 'success', message: '保存成功' });
       window.dispatchEvent(new Event('PROFILE_UPDATED'));
       window.dispatchEvent(new Event('USER_UPDATED'));
       window.dispatchEvent(new Event('auth:changed'));
@@ -267,310 +350,294 @@ export default function ProfilePage() {
     }
   };
 
-  const statItems = [
-    { label: '知识库数量', value: knowledge?.stats?.baseCount ?? 0 },
-    { label: '文档数量', value: knowledge?.stats?.documentCount ?? 0 },
-    { label: 'Chunk 数量', value: knowledge?.stats?.chunkCount ?? 0 },
-    { label: '学习计划数量', value: learningCoach?.plan ? 1 : 0 },
-    { label: '今日学习任务', value: dashboard?.learning?.todayTasks ?? 0 },
-    { label: 'PPT 生成次数', value: pptProjects.length },
-    { label: '数据分析次数', value: dashboard?.analytics?.analysisCount ?? 0 },
-    { label: '简历优化次数', value: dashboard?.resume?.optimizeCount ?? 0 },
-    { label: '会议纪要次数', value: meetingNotes.length }
+  const progressPills = [
+    { label: '学习完成率', value: completionRate, display: `${completionRate}%`, color: 'from-violet-500 to-purple-500' },
+    { label: '连续学习', value: Math.min(100, (streakDays / 30) * 100), display: `${streakDays}天`, color: 'from-purple-500 to-fuchsia-500' },
+    { label: '知识库进度', value: Math.min(100, ((knowledge?.stats?.documentCount || 0) / 20) * 100), display: `${knowledge?.stats?.documentCount || 0}篇`, color: 'from-indigo-500 to-violet-500' },
+    { label: '今日任务', value: Math.min(100, ((dashboard?.learning?.todayTasks || 0) / 5) * 100), display: `${dashboard?.learning?.todayTasks || 0}个`, color: 'from-fuchsia-500 to-pink-500' }
   ];
 
-  const recentKnowledgeDocs = isAuthenticated ? (knowledge?.documents || []).slice(0, 4) : [];
-  const recentLearningTasks = isAuthenticated ? (learningCoach?.tasks || []).slice(0, 4) : [];
-  const recentPpt = isAuthenticated ? pptProjects.slice(0, 4) : [];
-  const recentMeetings = isAuthenticated ? meetingNotes.slice(0, 4) : [];
+  const largeStats = [
+    { value: knowledge?.stats?.baseCount ?? 0, label: '知识库' },
+    { value: knowledge?.stats?.documentCount ?? 0, label: '文档' },
+    { value: knowledge?.stats?.chunkCount ?? 0, label: '知识块' }
+  ];
 
-  const emptyHint = '请先登录以查看个人信息';
+  const recentTasks = (learningCoach?.tasks || []).slice(0, 5);
+  const recentDocs = (knowledge?.documents || []).slice(0, 4);
+  const chartData = useMemo(() => {
+    return [12, 28, 18, 35, 24, completionRate || 18, 42, 30];
+  }, [completionRate]);
+
+  const scheduleItems = recentTasks.length
+    ? recentTasks.map((t, i) => ({
+        time: `${9 + i * 2}:00`,
+        title: t.title,
+        sub: t.knowledgePointTitle || t.status,
+        active: i === 0
+      }))
+    : [
+        { time: '09:00', title: '每日同步', sub: '回顾昨日学习', active: true },
+        { time: '11:00', title: '知识点整理', sub: '导数与极限', active: false },
+        { time: '14:00', title: '练习题', sub: '完成 5 道题目', active: false },
+        { time: '16:00', title: '复习会议', sub: '错题回顾', active: false },
+        { time: '20:00', title: '总结笔记', sub: '写入知识库', active: false }
+      ];
 
   return (
     <WorkspaceShell active="/profile">
-      <div className="space-y-4">
+      <div className="relative -m-4 min-h-[calc(100dvh-2rem)] overflow-hidden rounded-[2rem] bg-gradient-to-br from-purple-50/90 via-white to-violet-50/80 p-6 md:p-8">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_100%_0%,rgba(139,92,246,0.08),transparent_40%)]" />
+
         {toast ? (
           <motion.div
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
-            className={`rounded-2xl border px-4 py-3 text-sm backdrop-blur-xl ${toast.type === 'success' ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200' : 'border-rose-500/20 bg-rose-500/10 text-rose-200'}`}
+            className={`relative z-10 rounded-xl border px-4 py-3 text-sm ${toast.type === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-600'}`}
           >
             {toast.message}
           </motion.div>
         ) : null}
 
-        {loading ? loadingSkeleton : null}
-
-        <motion.section className="panel overflow-hidden" {...fadeIn}>
-          <div className="grid gap-6 xl:grid-cols-[1.35fr_0.65fr]">
-            <div className="rounded-3xl border border-zinc-800/80 bg-zinc-950/40 p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] backdrop-blur-2xl">
-              <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="flex h-20 w-20 items-center justify-center rounded-2xl border border-blue-500/20 bg-blue-500/10 text-3xl font-semibold text-blue-300 shadow-lg shadow-blue-500/10">
-                    {avatar || ''}
-                  </div>
-                  <div>
-                    <p className="text-sm text-zinc-500">AI Profile</p>
-                    <h1 className="text-3xl font-semibold text-zinc-50">{displayName || ''}</h1>
-                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-400">
-                      {isAuthenticated ? <span className="rounded-full border border-zinc-800 bg-zinc-900/60 px-3 py-1">{displayUser?.identity || ''}</span> : null}
-                      {isAuthenticated ? <span className="rounded-full border border-zinc-800 bg-zinc-900/60 px-3 py-1">{displayUser?.profession || ''}</span> : null}
-                      {isAuthenticated ? <span className="rounded-full border border-zinc-800 bg-zinc-900/60 px-3 py-1">连续学习 {streakDays} 天</span> : null}
-                      {isAuthenticated ? <span className="rounded-full border border-blue-500/20 bg-blue-500/10 px-3 py-1 text-blue-300">Lv.{level} Explorer</span> : null}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap gap-2">
-                  {isAuthenticated ? (
-                    <button type="button" onClick={openEditModal} className="rounded-full border border-blue-500/20 bg-blue-500 px-4 py-2 text-sm font-medium text-white transition hover:opacity-90">
-                      编辑资料
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-
-              <div className="mt-6 grid gap-4 xl:grid-cols-[1fr_1.05fr]">
-                <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
-                  <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">成长状态</p>
-                  <div className="mt-3 text-4xl font-semibold text-zinc-50">Lv.{level}</div>
-                  <p className="mt-2 text-sm leading-7 text-zinc-400">连续学习 {streakDays} 天，学习完成率 {completionRate}%。</p>
-                  <div className="mt-4 h-2 overflow-hidden rounded-full bg-zinc-800">
-                    <div className="h-full rounded-full bg-gradient-to-r from-blue-500 via-cyan-400 to-emerald-400" style={{ width: progressBar(completionRate) }} />
-                  </div>
-                  <p className="mt-2 text-xs text-zinc-500">{completionRate}%</p>
-                </div>
-
-                <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
-                  <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">AI 用户画像</p>
-                  {isAuthenticated ? <p className="mt-3 text-sm leading-8 text-zinc-200">{aiPersona}</p> : null}
-                  {isAuthenticated ? (
-                    <div className="mt-4 rounded-2xl border border-blue-500/20 bg-blue-500/10 p-4 text-sm leading-7 text-zinc-200">
-                      {currentPhase || ''}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-3xl border border-zinc-800 bg-zinc-950/50 p-6 backdrop-blur-2xl">
-              <p className="text-sm font-semibold text-zinc-50">Learning Goal</p>
-              <div className="mt-4 space-y-4">
-                <div>
-                  <div className="flex items-center justify-between text-sm text-zinc-400">
-                    <span>当前目标</span>
-                    <span>{completionRate}%</span>
-                  </div>
-                  <div className="mt-2 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 text-zinc-200">
-                    {isAuthenticated ? dashboard?.profile?.goal || displayUser?.goal || '' : ''}
-                  </div>
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4">
-                    <p className="text-xs text-zinc-500">截止日期</p>
-                    <p className="mt-2 text-lg font-medium text-zinc-50">{isAuthenticated ? formatDate(dashboard?.profile?.goalTargetDate || displayUser?.goalTargetDate || '') : ''}</p>
-                  </div>
-                  <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4">
-                    <p className="text-xs text-zinc-500">当前学习阶段</p>
-                    <p className="mt-2 text-lg font-medium text-zinc-50">{isAuthenticated ? currentPhase || '' : ''}</p>
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4">
-                  <div className="flex items-center justify-between text-sm text-zinc-400">
-                    <span>完成率</span>
-                    <span>{completionRate}%</span>
-                  </div>
-                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-zinc-800">
-                    <div className="h-full rounded-full bg-gradient-to-r from-blue-500 to-emerald-400" style={{ width: progressBar(completionRate) }} />
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 text-sm text-zinc-300">
-                  <p className="text-xs text-zinc-500">预计完成时间</p>
-                  <p className="mt-2 text-lg font-medium text-zinc-50">{isAuthenticated ? formatDate(dashboard?.profile?.goalTargetDate || displayUser?.goalTargetDate || '') : ''}</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </motion.section>
-
-        <motion.section className="panel" {...fadeIn} transition={{ ...fadeIn.transition, delay: 0.04 }}>
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold text-zinc-50">Workspace Statistics</p>
-              <p className="mt-1 text-xs text-zinc-500">所有统计来自真实接口聚合</p>
-            </div>
-            <div className="text-xs text-zinc-500">Dashboard / Knowledge / Learning / Resume / Analytics</div>
-          </div>
-
-          {loading ? (
-            <div className="mt-5">
-              <div className="grid gap-4 lg:grid-cols-2">
-                {Array.from({ length: 6 }).map((_, index) => (
-                  <div key={`stats-skeleton-${index}`} className="h-24 animate-pulse rounded-2xl border border-zinc-800 bg-zinc-900/50" />
-                ))}
-              </div>
-            </div>
-          ) : errors.length && !profile ? (
-            <div className="mt-5 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-100">
-              <div className="font-medium">资料加载失败</div>
-              <p className="mt-2 text-amber-50/80">请稍后重试。</p>
-            </div>
-          ) : (
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-              {statItems.map((item, index) => (
-                <div key={`${item.label}-${index}`} className="group rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 transition duration-300 hover:border-zinc-700 hover:bg-zinc-900/80 hover:shadow-lg hover:shadow-black/20">
-                  <div className="text-sm text-zinc-500">{item.label}</div>
-                  <div className="mt-3 text-3xl font-semibold text-zinc-50">{item.value}</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </motion.section>
-
-        <motion.section className="panel" {...fadeIn} transition={{ ...fadeIn.transition, delay: 0.08 }}>
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold text-zinc-50">Personal Information</p>
-              <p className="mt-1 text-xs text-zinc-500">默认只读，点击编辑后才可修改并真正写入数据库</p>
-            </div>
-            <span className={`rounded-full border px-3 py-1 text-xs ${pageState === 'authenticated' ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200' : pageState === 'guest' ? 'border-zinc-700 bg-zinc-900/50 text-zinc-400' : 'border-blue-500/20 bg-blue-500/10 text-blue-200'}`}>
-              {pageState === 'loading' ? '加载中' : pageState === 'guest' ? '未登录' : '已登录'}
-            </span>
-          </div>
-
-          <div className="mt-5 grid gap-4 xl:grid-cols-[1fr_1.1fr]">
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/50 p-5">
-              <div className="flex items-center gap-4">
-                <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-blue-500/20 bg-blue-500/10 text-2xl font-semibold text-blue-300">{avatar || ''}</div>
-                <div className="min-w-0">
-                  <p className="text-sm text-zinc-500">账户状态</p>
-                  <p className="truncate text-xl font-semibold text-zinc-50">{displayName || ''}</p>
-                  <p className="mt-1 text-sm text-zinc-400">{displayUser?.identity || ''}</p>
-                </div>
-              </div>
-
-              <div className="mt-4 grid gap-3 text-sm text-zinc-300">
-                {[
-                  ['姓名', displayUser?.name || ''],
-                  ['昵称', displayUser?.nickname || displayUser?.name || ''],
-                  ['身份', displayUser?.identity || ''],
-                  ['专业', displayUser?.profession || ''],
-                  ['学习目标', displayUser?.goal || ''],
-                  ['目标日期', displayUser?.goalTargetDate || '']
-                ].map(([label, value], index) => (
-                  <div key={`${label}-${index}`} className="flex items-start justify-between gap-4 rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-3">
-                    <span className="text-zinc-500">{label}</span>
-                    <span className="max-w-[65%] text-right text-zinc-200">{value}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/50 p-5">
-              <div className="rounded-2xl border border-dashed border-zinc-800 bg-zinc-900/30 p-6 text-zinc-400">
-                <p className="text-lg font-medium text-zinc-50">只读模式</p>
-                <p className="mt-2 text-sm leading-7">点击“编辑资料”后会打开居中 Modal，支持校验、保存 loading、成功提示与全系统同步。</p>
-              </div>
-            </div>
-          </div>
-        </motion.section>
-
-        <motion.section className="panel" {...fadeIn} transition={{ ...fadeIn.transition, delay: 0.12 }}>
-          <div>
-            <p className="text-sm font-semibold text-zinc-50">AI Memory</p>
-            <p className="mt-1 text-xs text-zinc-500">真正的 AI 长期记忆中心，连接学习、工作和偏好</p>
-          </div>
-
-          <div className="mt-5 grid gap-4 xl:grid-cols-3">
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/50 p-5 transition hover:border-zinc-700">
-              <p className="text-sm font-medium text-zinc-50">学习记忆</p>
-              <div className="mt-4 space-y-3 text-sm text-zinc-400">
-                {[
-                  `最近学习课程：${recentLearningTasks[0]?.title || ''}`,
-                  `最近学习知识点：${learningCoach?.tasks?.[0]?.knowledgePointTitle || ''}`,
-                  `最近上传文档：${recentKnowledgeDocs[0]?.displayName || recentKnowledgeDocs[0]?.originalName || ''}`,
-                  `最近复习内容：${learningCoach?.tasks?.[1]?.title || ''}`
-                ].map((item, index) => (
-                  <div key={`learning-memory-${index}`}>{item}</div>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/50 p-5 transition hover:border-zinc-700">
-              <p className="text-sm font-medium text-zinc-50">工作记忆</p>
-              <div className="mt-4 space-y-3 text-sm text-zinc-400">
-                {[
-                  `PPT：${recentPpt[0]?.title || ''}`,
-                  `Excel 分析：${dashboard?.analytics?.analysisCount ? `${dashboard.analytics.analysisCount} 次数据分析` : ''}`,
-                  `会议纪要：${recentMeetings[0]?.title || ''}`,
-                  `简历优化：${dashboard?.resume?.optimizeCount ? `${dashboard.resume.optimizeCount} 次简历优化` : ''}`
-                ].map((item, index) => (
-                  <div key={`work-memory-${index}`}>{item}</div>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-950/50 p-5 transition hover:border-zinc-700">
-              <p className="text-sm font-medium text-zinc-50">AI 偏好</p>
-              <div className="mt-4 space-y-3 text-sm text-zinc-400">
-                <div>默认模型：DeepSeek</div>
-                <div>默认语言：中文</div>
-                <div>回答风格：简洁、结构化</div>
-                <div>主题：深色模式</div>
-              </div>
-            </div>
-          </div>
-        </motion.section>
-
-        <motion.section className="panel" {...fadeIn} transition={{ ...fadeIn.transition, delay: 0.16 }}>
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold text-zinc-50">Learning Community</p>
-              <p className="mt-1 text-xs text-zinc-500">目前以产品化占位呈现，后续接入真实社区数据</p>
-            </div>
-            <span className="rounded-full border border-zinc-800 bg-zinc-900/60 px-3 py-1 text-xs text-zinc-400">Coming Soon</span>
-          </div>
-
-          <div className="mt-5 grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
-            {[
-              ['最近学习动态', '暂无动态，完成一次学习计划后自动同步。'],
-              ['排行榜', '敬请期待真实排行数据。'],
-              ['共同学习', '和同学一起建立学习节奏。'],
-              ['学习小组', '后续支持分组协作。']
-            ].map(([title, desc], index) => (
-              <div key={`${title}-${index}`} className="rounded-2xl border border-zinc-800 bg-zinc-950/50 p-5 transition hover:border-zinc-700">
-                <p className="text-sm font-medium text-zinc-50">{title}</p>
-                <p className="mt-3 text-sm leading-7 text-zinc-400">{desc}</p>
-              </div>
+        {loading ? (
+          <div className="relative z-10 grid gap-5 lg:grid-cols-3">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <div key={`profile-skeleton-${index}`} className="h-48 animate-pulse rounded-3xl border border-slate-200/70 bg-slate-100/60" />
             ))}
           </div>
-        </motion.section>
-
-        {errors.length ? (
-          <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-100">
-            <div className="font-medium">部分模块尚未成功加载</div>
-            <ul className="mt-2 space-y-1 text-amber-50/80">
-              {errors.map((item, index) => (
-                <li key={`${item.id}-${index}`}>· {item.message}</li>
-              ))}
-            </ul>
-          </div>
         ) : null}
+
+        <motion.div className="relative z-10 space-y-5" variants={staggerContainer} initial="hidden" animate="show">
+          {/* Header */}
+          <motion.div variants={staggerItem} className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-[0.2em] text-purple-400">AI Personal Center</p>
+              <h1 className="mt-1 text-4xl font-light text-slate-800">
+                Hello <span className="font-semibold text-slate-900">{displayName || '同学'}</span>
+              </h1>
+              <p className="mt-2 text-sm text-slate-400">欢迎回来，这是你的个人学习与工作数据概览</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <Link href="/dashboard" className="rounded-full border border-slate-200 bg-white/80 px-4 py-2 text-sm text-slate-600 shadow-sm transition hover:border-purple-300 hover:text-purple-600">
+                返回 Dashboard
+              </Link>
+              {isAuthenticated ? (
+                <button type="button" onClick={openEditModal} className="rounded-full bg-gradient-to-r from-violet-500 to-purple-500 px-5 py-2 text-sm font-semibold text-white shadow-[0_4px_16px_rgba(139,92,246,0.35)] transition hover:from-violet-600 hover:to-purple-600 active:scale-[0.98]">
+                  编辑资料
+                </button>
+              ) : null}
+            </div>
+          </motion.div>
+
+          {/* Progress pills + large stats */}
+          <motion.div variants={staggerItem} className="grid gap-5 xl:grid-cols-[1.6fr_0.4fr]">
+            <div className="profile-card">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                {progressPills.map((pill, index) => (
+                  <div key={index} className="rounded-2xl border border-slate-100 bg-slate-50/60 p-4 transition hover:border-purple-200 hover:bg-purple-50/40">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-slate-500">{pill.label}</span>
+                      <span className="text-lg font-bold text-slate-800">{pill.display}</span>
+                    </div>
+                    <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-200">
+                      <div className={`h-full rounded-full bg-gradient-to-r ${pill.color} shadow-[0_2px_8px_rgba(139,92,246,0.25)]`} style={{ width: `${pill.value}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="profile-card flex items-center justify-between gap-2">
+              {largeStats.map((stat, index) => (
+                <div key={index} className="text-center">
+                  <div className="text-3xl font-semibold text-slate-800">{stat.value}</div>
+                  <div className="mt-1 text-xs text-slate-400">{stat.label}</div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+
+          {/* Main three columns */}
+          <motion.div variants={staggerItem} className="grid gap-5 xl:grid-cols-[300px_1fr_340px]">
+            {/* Schedule */}
+            <div className="profile-card">
+              <div className="mb-4 flex items-center justify-between">
+                <h3 className="text-base font-semibold text-slate-800">Schedule</h3>
+                <Link href="/learning-coach" className="text-xs text-purple-500 transition hover:text-purple-600">查看全部</Link>
+              </div>
+              <div className="relative space-y-4 pl-3">
+                <div className="absolute bottom-0 left-[21px] top-2 w-px bg-slate-200" />
+                {scheduleItems.map((item, index) => (
+                  <div key={index} className="relative flex items-start gap-3">
+                    <div className={`relative z-10 mt-1.5 h-3 w-3 rounded-full border-2 ${item.active ? 'border-purple-500 bg-purple-500' : 'border-slate-300 bg-white'}`} />
+                    <div className={`flex-1 rounded-2xl border p-3 transition ${item.active ? 'border-purple-200 bg-purple-50/60' : 'border-slate-100 bg-slate-50/60'}`}>
+                      <div className={`text-xs font-medium ${item.active ? 'text-purple-600' : 'text-slate-400'}`}>{item.time}</div>
+                      <div className="mt-1 text-sm font-medium text-slate-700">{item.title}</div>
+                      <div className="mt-0.5 text-xs text-slate-400">{item.sub}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Knowledge / Activity Table */}
+            <div className="profile-card">
+              <div className="mb-4 flex items-center justify-between">
+                <h3 className="text-base font-semibold text-slate-800">Recent Knowledge</h3>
+                <Link href="/knowledge" className="text-xs text-purple-500 transition hover:text-purple-600">查看全部</Link>
+              </div>
+              <div className="overflow-hidden rounded-2xl border border-slate-100">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50/80 text-xs text-slate-400">
+                    <tr>
+                      <th className="px-4 py-3 font-medium">名称</th>
+                      <th className="px-4 py-3 font-medium">类型</th>
+                      <th className="px-4 py-3 font-medium">日期</th>
+                      <th className="px-4 py-3 font-medium">状态</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {recentDocs.length ? recentDocs.map((doc, index) => (
+                      <tr key={doc.id || index} className="transition hover:bg-purple-50/40">
+                        <td className="px-4 py-3 text-slate-700">{doc.displayName || doc.originalName || '-'}</td>
+                        <td className="px-4 py-3 text-slate-500">{doc.fileType || '文档'}</td>
+                        <td className="px-4 py-3 text-slate-500">{formatDate(doc.createdAt)}</td>
+                        <td className="px-4 py-3"><span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-600">已处理</span></td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td colSpan={4} className="px-4 py-8 text-center text-sm text-slate-400">暂无知识库文档，快去上传第一份资料吧</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Dark Goal Card */}
+            <div className="profile-dark-card flex flex-col">
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className="text-base font-semibold">Learning Goal</h3>
+                <Link href="/growth" className="rounded-full bg-white/10 p-1.5 transition hover:bg-white/20">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M7 17L17 7M17 7H7M17 7V17" /></svg>
+                </Link>
+              </div>
+              <div className="flex flex-1 flex-col items-center justify-center py-4">
+                <CircularProgress value={completionRate} label="目标完成度" sub={dashboard?.profile?.goal || '暂无目标'} />
+              </div>
+              <div className="space-y-3 rounded-2xl bg-white/5 p-4 text-sm">
+                <div className="flex justify-between text-purple-100">
+                  <span>当前目标</span>
+                  <span className="font-medium">{dashboard?.profile?.goal || '-'}</span>
+                </div>
+                <div className="flex justify-between text-purple-100">
+                  <span>截止日期</span>
+                  <span className="font-medium">{formatDate(dashboard?.profile?.goalTargetDate || displayUser?.goalTargetDate || '')}</span>
+                </div>
+                <div className="flex justify-between text-purple-100">
+                  <span>当前阶段</span>
+                  <span className="font-medium">{currentPhase || '探索期'}</span>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+
+          {/* Bottom row */}
+          <motion.div variants={staggerItem} className="grid gap-5 xl:grid-cols-[1fr_340px]">
+            {/* Line chart */}
+            <div className="profile-card">
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className="text-base font-semibold text-slate-800">Learning Statistics</h3>
+                <div className="flex items-center gap-2 text-xs text-slate-400">
+                  <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-violet-500" />学习进度</span>
+                  <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-slate-300" />其他</span>
+                </div>
+              </div>
+              <LineChart data={chartData} />
+            </div>
+
+            {/* Composition */}
+            <div className="profile-card">
+              <h3 className="mb-4 text-base font-semibold text-slate-800">Workspace Composition</h3>
+              <div className="grid grid-cols-2 gap-4">
+                {[
+                  { label: 'PPT', value: pptProjects.length, color: 'bg-violet-500' },
+                  { label: '会议', value: meetingNotes.length, color: 'bg-purple-500' },
+                  { label: '简历优化', value: dashboard?.resume?.optimizeCount ?? 0, color: 'bg-indigo-500' },
+                  { label: '数据分析', value: dashboard?.analytics?.analysisCount ?? 0, color: 'bg-fuchsia-500' }
+                ].map((item, index) => (
+                  <div key={index} className="rounded-2xl border border-slate-100 bg-slate-50/60 p-4 text-center transition hover:border-purple-200 hover:bg-purple-50/40">
+                    <div className="mx-auto mb-2 h-2 w-10 overflow-hidden rounded-full bg-slate-200">
+                      <div className={`h-full ${item.color}`} style={{ width: `${Math.min(100, Math.max(8, (item.value || 0) * 10))}%` }} />
+                    </div>
+                    <div className="text-xl font-semibold text-slate-800">{item.value}</div>
+                    <div className="text-xs text-slate-400">{item.label}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </motion.div>
+
+          {/* AI Memory row */}
+          <motion.div variants={staggerItem} className="grid gap-5 lg:grid-cols-3">
+            {[
+              {
+                title: '学习记忆',
+                items: [
+                  `最近学习：${recentTasks[0]?.title || '暂无'}`,
+                  `知识点：${learningCoach?.tasks?.[0]?.knowledgePointTitle || '暂无'}`,
+                  `最近文档：${recentDocs[0]?.displayName || recentDocs[0]?.originalName || '暂无'}`,
+                  `复习内容：${learningCoach?.tasks?.[1]?.title || '暂无'}`
+                ]
+              },
+              {
+                title: '工作记忆',
+                items: [
+                  `PPT：${pptProjects[0]?.title || '暂无'}`,
+                  `数据分析：${dashboard?.analytics?.analysisCount || 0} 次`,
+                  `会议纪要：${meetingNotes[0]?.title || '暂无'}`,
+                  `简历优化：${dashboard?.resume?.optimizeCount || 0} 次`
+                ]
+              },
+              {
+                title: 'AI 偏好',
+                items: ['默认模型：DeepSeek', '默认语言：中文', '回答风格：简洁、结构化', '主题：浅色模式']
+              }
+            ].map((card, index) => (
+              <div key={index} className="profile-card transition hover:border-purple-200 hover:shadow-[0_8px_40px_rgba(139,92,246,0.1)]">
+                <h3 className="text-base font-semibold text-slate-800">{card.title}</h3>
+                <div className="mt-4 space-y-2 text-sm text-slate-500">
+                  {card.items.map((item, idx) => (
+                    <div key={idx} className="rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2">{item}</div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </motion.div>
+
+          {errors.length ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
+              <div className="font-medium">部分模块尚未成功加载</div>
+              <ul className="mt-2 space-y-1 text-amber-600/80">
+                {errors.map((item, index) => (
+                  <li key={`${item.id}-${index}`}>· {item.message}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </motion.div>
       </div>
 
       {modal.open ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm">
-          <div className="w-full max-w-2xl rounded-3xl border border-zinc-800 bg-zinc-950 p-6 shadow-2xl shadow-black/40">
-            <div className="flex items-center justify-between gap-3 border-b border-zinc-800 pb-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/20 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_20px_60px_rgba(15,23,42,0.12)]">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200/70 pb-4">
               <div>
-                <p className="text-xs uppercase tracking-[0.25em] text-zinc-500">AI Personal Operating System</p>
-                <h2 className="mt-2 text-xl font-semibold text-zinc-50">{modal.title}</h2>
+                <p className="text-xs uppercase tracking-[0.25em] text-slate-400">AI Personal Operating System</p>
+                <h2 className="mt-2 text-xl font-semibold text-slate-800">{modal.title}</h2>
               </div>
-              <button type="button" onClick={closeEditModal} disabled={saving} className="rounded-full border border-zinc-800 bg-zinc-900/70 px-4 py-2 text-sm text-zinc-200 transition hover:border-zinc-700 disabled:opacity-60">
+              <button type="button" onClick={closeEditModal} disabled={saving} className="rounded-xl border border-slate-200 bg-white/80 px-4 py-2 text-sm text-slate-600 transition hover:bg-slate-50 disabled:opacity-60">
                 关闭
               </button>
             </div>
@@ -584,24 +651,24 @@ export default function ProfilePage() {
                 ['学习目标', 'goal'],
                 ['目标日期', 'goal_target_date']
               ].map(([label, key], index) => (
-                <label key={`${String(key)}-${index}`} className="block rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 transition hover:border-zinc-700 sm:col-span-1">
-                  <span className="text-sm text-zinc-400">{label}</span>
+                <label key={`${String(key)}-${index}`} className="block rounded-xl border border-slate-200/70 bg-slate-50/60 p-4 transition hover:border-purple-300 sm:col-span-1">
+                  <span className="text-sm text-slate-500">{label}</span>
                   <input
                     value={draft[key as keyof EditableProfile] as string}
                     onChange={(e) => setDraft((prev) => ({ ...prev, [key]: e.target.value }))}
                     type={key === 'goal_target_date' ? 'date' : 'text'}
-                    className="mt-3 w-full rounded-xl border border-zinc-800 bg-zinc-950/60 px-4 py-3 text-sm text-zinc-50 outline-none transition placeholder:text-zinc-600 focus:border-blue-500/50"
+                    className="input-field mt-3"
                     placeholder={label}
                   />
                 </label>
               ))}
             </div>
 
-            <div className="mt-5 flex flex-wrap gap-3 border-t border-zinc-800 pt-4">
-              <button type="button" onClick={closeEditModal} disabled={saving} className="rounded-full border border-zinc-800 bg-zinc-900/70 px-5 py-3 text-sm text-zinc-200 transition hover:border-zinc-700 disabled:cursor-not-allowed disabled:opacity-60">
+            <div className="mt-5 flex flex-wrap gap-3 border-t border-slate-200/70 pt-4">
+              <button type="button" onClick={closeEditModal} disabled={saving} className="btn-ghost">
                 取消
               </button>
-              <button type="button" onClick={handleSave} disabled={saving} className="rounded-full border border-emerald-500/20 bg-emerald-500 px-5 py-3 text-sm font-medium text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60">
+              <button type="button" onClick={handleSave} disabled={saving} className="btn-primary">
                 {saving ? '保存中...' : '保存修改'}
               </button>
             </div>

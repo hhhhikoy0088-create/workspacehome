@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import request from '@/api/request';
 import { clearAuthSession, normalizeAuthUser, readAuthSession, writeAuthSession, type AuthSessionUser } from '@/lib/auth-session';
+import type { UserProfile } from '@/types/core';
 
 export type AuthUser = AuthSessionUser;
 
@@ -15,20 +16,11 @@ type AuthContextValue = {
   login: (user?: AuthUser | null, token?: string) => Promise<void>;
   logout: () => void;
   refresh: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
   setUser: (user: AuthUser | null) => void;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
-
-function emitAuthEvents() {
-  if (typeof window === 'undefined') return;
-  window.dispatchEvent(new Event('auth:changed'));
-  window.dispatchEvent(new Event('USER_UPDATED'));
-  window.dispatchEvent(new Event('PROFILE_UPDATED'));
-  window.dispatchEvent(new Event('workspace-profile-updated'));
-  window.dispatchEvent(new Event('workspace-data-updated'));
-  window.dispatchEvent(new Event('workspace-goal-updated'));
-}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, updateUser] = useState<AuthUser | null>(null);
@@ -44,14 +36,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUserId(session.userId);
   }, []);
 
-  const refresh = useCallback(async (): Promise<void> => {
+  const refreshProfile = useCallback(async (): Promise<void> => {
     if (typeof window === 'undefined') return;
     const session = readAuthSession();
     let nextUser = session.user;
     try {
       if (session.user?.id) {
         const profileRes = await request.get('/profile');
-        nextUser = profileRes?.profile || profileRes?.user || session.user;
+        nextUser = profileRes?.user || profileRes?.profile || session.user;
       }
     } catch {
       nextUser = session.user;
@@ -59,11 +51,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     persistSession(nextUser, session.token);
   }, [persistSession]);
 
+  const refresh = useCallback(async (): Promise<void> => {
+    await refreshProfile();
+  }, [refreshProfile]);
+
   const login = useCallback(async (nextUser?: AuthUser | null, nextToken = ''): Promise<void> => {
     const normalized = normalizeAuthUser(nextUser);
     persistSession(normalized, nextToken);
     setLoading(false);
-    emitAuthEvents();
   }, [persistSession]);
 
   const logout = useCallback(() => {
@@ -72,13 +67,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken('');
     setUserId('');
     setLoading(false);
-    emitAuthEvents();
   }, []);
 
   const setUser = useCallback((nextUser: AuthUser | null) => {
     const normalized = normalizeAuthUser(nextUser);
     persistSession(normalized, token);
-    emitAuthEvents();
   }, [persistSession, token]);
 
   useEffect(() => {
@@ -91,25 +84,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setLoading(false);
     }
-
-    const handleSync = () => {
-      refresh().catch(() => {});
-    };
-
-    window.addEventListener('PROFILE_UPDATED', handleSync);
-    window.addEventListener('USER_UPDATED', handleSync);
-    window.addEventListener('workspace-profile-updated', handleSync);
-    window.addEventListener('workspace-data-updated', handleSync);
-    window.addEventListener('workspace-goal-updated', handleSync);
-
-    return () => {
-      window.removeEventListener('PROFILE_UPDATED', handleSync);
-      window.removeEventListener('USER_UPDATED', handleSync);
-      window.removeEventListener('workspace-profile-updated', handleSync);
-      window.removeEventListener('workspace-data-updated', handleSync);
-      window.removeEventListener('workspace-goal-updated', handleSync);
-    };
-  }, [persistSession, refresh]);
+  }, [persistSession]);
 
   const value = useMemo<AuthContextValue>(() => ({
     user,
@@ -120,8 +95,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     login,
     logout,
     refresh,
+    refreshProfile,
     setUser
-  }), [user, token, userId, loading, login, logout, refresh, setUser]);
+  }), [user, token, userId, loading, login, logout, refresh, refreshProfile, setUser]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

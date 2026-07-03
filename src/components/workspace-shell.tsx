@@ -65,35 +65,35 @@ export function WorkspaceShell({ children, active }: { children: ReactNode; acti
       <div className="mx-auto grid min-h-[calc(100dvh-2rem)] max-w-[1400px] gap-4 xl:grid-cols-[260px_1fr]">
         <aside className="panel flex flex-col">
           {loading ? (
-            <div className="rounded-lg border border-zinc-800 bg-zinc-800/50 p-4 text-sm text-zinc-500">正在同步个人状态...</div>
+            <div className="rounded-xl border border-slate-200/70 bg-slate-50/80 p-4 text-sm text-slate-400">正在同步个人状态...</div>
           ) : profile.isLoggedIn ? (
             <Link
               href="/profile"
-              className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-800/50 p-4 transition hover:border-zinc-700 hover:bg-zinc-800"
+              className="flex items-center gap-3 rounded-xl border border-slate-200/70 bg-slate-50/80 p-4 transition hover:border-indigo-200 hover:bg-indigo-50/50"
             >
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-lg font-semibold text-white">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 text-lg font-semibold text-white shadow-[0_4px_12px_rgba(99,102,241,0.3)]">
                 {profile.avatar || '未'}
               </div>
               <div className="min-w-0">
-                <p className="truncate text-sm font-semibold text-zinc-100">{profile.name || '未登录'}</p>
-                <p className="mt-0.5 text-xs text-blue-400">{profile.level || profile.identity || 'Pro 会员'}</p>
+                <p className="truncate text-sm font-semibold text-slate-800">{profile.name || '未登录'}</p>
+                <p className="mt-0.5 text-xs text-indigo-500">{profile.level || profile.identity || 'Pro 会员'}</p>
               </div>
             </Link>
           ) : (
-            <div className="rounded-lg border border-zinc-800 bg-zinc-800/50 p-4">
-              <Link href="/auth/login" className="block text-sm font-semibold text-zinc-100 transition hover:text-blue-400">
+            <div className="rounded-xl border border-slate-200/70 bg-slate-50/80 p-4">
+              <Link href="/auth/login" className="block text-sm font-semibold text-slate-800 transition hover:text-indigo-600">
                 登录 / 注册
               </Link>
-              <p className="mt-1 text-xs text-zinc-500">登录后同步长期记忆</p>
+              <p className="mt-1 text-xs text-slate-400">登录后同步长期记忆</p>
             </div>
           )}
 
-          <div className="mt-4 border-t border-zinc-800 pt-4">
-            <p className="text-lg font-semibold text-zinc-50">Shrimp AI</p>
-            <p className="mt-1 text-xs leading-5 text-zinc-500">长期记忆 · 学习教练 · 工作秘书</p>
+          <div className="mt-4 border-t border-slate-200/70 pt-4">
+            <p className="gradient-text text-lg font-bold">Shrimp AI</p>
+            <p className="mt-1 text-xs leading-5 text-slate-400">长期记忆 · 学习教练 · 工作秘书</p>
           </div>
 
-          <nav className="mt-4 flex-1 space-y-1">
+          <nav className="mt-6 flex-1 space-y-2">
             {navItems.map((item, index) => {
               const isActive = active === item.href;
               return (
@@ -103,15 +103,15 @@ export function WorkspaceShell({ children, active }: { children: ReactNode; acti
                   className={`nav-item ${isActive ? 'nav-item-active' : 'nav-item-idle'}`}
                 >
                   <span>{item.label}</span>
-                  {isActive ? <motion.span layoutId="nav-indicator" className="h-1.5 w-1.5 rounded-full bg-blue-500" /> : null}
+                  {isActive ? <motion.span layoutId="nav-indicator" className="h-1.5 w-1.5 rounded-full bg-indigo-500" /> : null}
                 </Link>
               );
             })}
           </nav>
 
-          <div className="mt-4 border-t border-zinc-800 pt-4">
+          <div className="mt-4 border-t border-slate-200/70 pt-4">
             {isLogin ? (
-              <button type="button" onClick={() => { logout(); router.push('/auth/login'); }} className="w-full rounded-lg border border-zinc-800 bg-zinc-900/60 px-4 py-3 text-sm text-zinc-200 transition hover:border-zinc-700 hover:bg-zinc-900">
+              <button type="button" onClick={() => { logout(); router.push('/auth/login'); }} className="w-full rounded-xl border border-slate-200 bg-white/80 px-4 py-3 text-sm text-slate-600 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600">
                 退出登录
               </button>
             ) : null}

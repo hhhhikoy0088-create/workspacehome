@@ -52,18 +52,6 @@ type SearchResult = {
   content: string;
 };
 
-type ChatReference = {
-  fileName: string;
-  chunkIndex: number;
-  similarity: number;
-};
-
-type ChatReferenceWithCitation = ChatReference & { citation: number };
-
-type ChatMessagePart =
-  | { type: 'text'; value: string }
-  | { type: 'reference'; citation: number };
-
 type LearningLinkResult = {
   linked: boolean;
   reason?: string;
@@ -72,34 +60,11 @@ type LearningLinkResult = {
   pathRecommendation?: Array<{ order: number; title: string; difficulty: string; mastery: number; recommendedReason: string }>;
 };
 
-function parseCitations(answer: string) {
-  const matches = [...answer.matchAll(/\[(\d+)\]/g)].map((match) => Number(match[1]));
-  return Array.from(new Set(matches.filter((num) => Number.isFinite(num) && num > 0)));
-}
-
-function parseAnswerParts(answer: string): ChatMessagePart[] {
-  const parts: ChatMessagePart[] = [];
-  const regex = /\[(\d+)\]/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-
-  while ((match = regex.exec(answer)) !== null) {
-    const text = answer.slice(lastIndex, match.index).trim();
-    if (text) parts.push({ type: 'text', value: text });
-    parts.push({ type: 'reference', citation: Number(match[1]) });
-    lastIndex = regex.lastIndex;
-  }
-
-  const tail = answer.slice(lastIndex).trim();
-  if (tail) parts.push({ type: 'text', value: tail });
-  return parts;
-}
-
 function similarityTone(score?: number) {
   const value = Number(score || 0);
-  if (value > 0.85) return 'text-emerald-300 border-emerald-500/20 bg-emerald-500/10';
-  if (value >= 0.6) return 'text-amber-300 border-amber-500/20 bg-amber-500/10';
-  return 'text-zinc-400 border-zinc-700 bg-zinc-800/40';
+  if (value > 0.85) return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+  if (value >= 0.6) return 'border-amber-200 bg-amber-50 text-amber-700';
+  return 'border-slate-200 bg-slate-50 text-slate-500';
 }
 
 async function kbRequest(path: string, options: RequestInit = {}) {
@@ -116,8 +81,6 @@ export default function KnowledgePage() {
   const { user } = useAuthStore();
   const userId = user?.id || '';
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const chunkRefs = useRef<Record<number, HTMLDivElement | null>>({});
-  const citationRefs = useRef<Record<number, HTMLButtonElement | null>>({});
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [selectedBaseId, setSelectedBaseId] = useState('');
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
@@ -136,14 +99,6 @@ export default function KnowledgePage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
-  const [chatQuery, setChatQuery] = useState('');
-  const [chatAnswer, setChatAnswer] = useState('');
-  const [chatAnswerParts, setChatAnswerParts] = useState<ChatMessagePart[]>([]);
-  const [chatReferences, setChatReferences] = useState<ChatReferenceWithCitation[]>([]);
-  const [chatLoading, setChatLoading] = useState(false);
-  const [activeCitation, setActiveCitation] = useState<number | null>(null);
-  const [activeChunkIndex, setActiveChunkIndex] = useState<number | null>(null);
-  const [learningLink, setLearningLink] = useState<LearningLinkResult | null>(null);
 
   const selectedBase = useMemo(() => knowledgeBases.find((item) => item.id === selectedBaseId) || null, [knowledgeBases, selectedBaseId]);
 
@@ -179,16 +134,6 @@ export default function KnowledgePage() {
       .then((res) => setDocuments(Array.isArray(res?.documents) ? res.documents : []))
       .catch(() => setDocuments([]));
   }, [selectedBaseId]);
-
-  useEffect(() => {
-    if (activeCitation == null) return;
-    citationRefs.current[activeCitation]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, [activeCitation]);
-
-  useEffect(() => {
-    if (activeChunkIndex == null) return;
-    chunkRefs.current[activeChunkIndex]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, [activeChunkIndex]);
 
   const openFileDialog = () => fileInputRef.current?.click();
 
@@ -288,7 +233,6 @@ export default function KnowledgePage() {
       setSelectedDocument(data);
       setChunks(Array.isArray(data?.chunks) ? data.chunks : []);
       setDetailOpen(true);
-      setActiveChunkIndex(null);
     } catch (err: any) {
       setError(err?.message || '读取文档详情失败');
     } finally {
@@ -335,85 +279,15 @@ export default function KnowledgePage() {
     }
   };
 
-  const handleChat = async () => {
-    if (!selectedBaseId) {
-      setError('请先选择知识库');
-      return;
-    }
-    if (!chatQuery.trim()) {
-      setError('请输入问题');
-      return;
-    }
-    try {
-      setChatLoading(true);
-      setError('');
-      const data = await kbRequest('/knowledge/chat', {
-        method: 'POST',
-        body: JSON.stringify({ knowledgeBaseId: selectedBaseId, query: chatQuery.trim() })
-      });
-      const nextAnswer = String(data?.answer || '');
-      const nextReferences = Array.isArray(data?.references) ? data.references : [];
-      if (!nextReferences.length) {
-        setChatAnswer('知识库中未找到相关信息');
-        setChatAnswerParts([{ type: 'text', value: '知识库中未找到相关信息' }]);
-        setChatReferences([]);
-        setActiveCitation(null);
-        return;
-      }
-
-      const citationNumbers = parseCitations(nextAnswer);
-      const normalizedReferences = nextReferences.map((item: ChatReference, index: number) => ({
-        ...item,
-        citation: citationNumbers[index] || index + 1
-      }));
-
-      setChatAnswer(nextAnswer);
-      setChatAnswerParts(parseAnswerParts(nextAnswer));
-      setChatReferences(normalizedReferences);
-      setActiveCitation(null);
-
-      try {
-        const linkResponse = await kbRequest('/api/learning/rag-link', {
-          method: 'POST',
-          body: JSON.stringify({ userId, knowledgeBaseId: selectedBaseId, query: chatQuery.trim() })
-        });
-        setLearningLink(linkResponse as LearningLinkResult);
-        if ((linkResponse as LearningLinkResult)?.linked) {
-          window.dispatchEvent(new Event('workspace-data-updated'));
-        }
-      } catch (linkErr: any) {
-        setLearningLink({ linked: false, reason: linkErr?.message || '联动失败' });
-      }
-    } catch (err: any) {
-      setError(err?.message || '问答失败');
-    } finally {
-      setChatLoading(false);
-    }
-  };
-
-  const focusReference = (citation: number) => {
-    setActiveCitation(citation);
-    const ref = chatReferences.find((item) => item.citation === citation);
-    if (!ref) return;
-    const chunkIndex = chunks.find((chunk) => chunk.chunkIndex === ref.chunkIndex)?.chunkIndex ?? ref.chunkIndex;
-    setActiveChunkIndex(chunkIndex);
-  };
-
-  const focusChunk = (chunkIndex: number) => {
-    setActiveChunkIndex(chunkIndex);
-    const ref = chatReferences.find((item) => item.chunkIndex === chunkIndex);
-    if (ref) setActiveCitation(ref.citation);
-  };
-
   return (
     <WorkspaceShell active="/knowledge">
-      <div className="panel text-zinc-100">
-        <div className="flex items-center justify-between gap-4 border-b border-zinc-800 pb-4">
-          <h1 className="text-2xl font-semibold text-zinc-50">AI知识库</h1>
+      <div className="panel text-slate-700">
+        <div className="flex items-center justify-between gap-4 border-b border-slate-200/70 pb-4">
+          <h1 className="gradient-text text-2xl font-bold">AI知识库</h1>
           <div className="flex items-center gap-3">
-            <div className="hidden rounded-full border border-zinc-800 bg-zinc-800/60 px-4 py-3 text-sm text-zinc-500 md:flex md:min-w-[260px]">搜索任何内容...</div>
-            <div className="grid h-11 w-11 place-items-center rounded-lg border border-zinc-800 bg-zinc-800/60 text-blue-400">🔔</div>
-            <div className="grid h-11 w-11 place-items-center rounded-lg border border-zinc-800 bg-zinc-800/60 text-zinc-500">⋯</div>
+            <div className="hidden rounded-full border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm text-slate-400 md:flex md:min-w-[260px]">搜索任何内容...</div>
+            <div className="grid h-11 w-11 place-items-center rounded-xl border border-slate-200 bg-white/80 text-sm font-medium text-indigo-500">KB</div>
+            <div className="grid h-11 w-11 place-items-center rounded-xl border border-slate-200 bg-white/80 text-sm font-medium text-slate-400">···</div>
           </div>
         </div>
 
@@ -429,14 +303,14 @@ export default function KnowledgePage() {
               setUploadDialogOpen(true);
             }
           }}
-          className="mt-5 flex min-h-[240px] flex-col items-center justify-center rounded-xl border-2 border-dashed border-zinc-700 bg-zinc-800/40 px-6 py-10 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]"
+          className="mt-5 flex min-h-[240px] flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50/60 px-6 py-10 text-center transition hover:border-indigo-300 hover:bg-indigo-50/30"
         >
-          <div className="grid h-16 w-16 place-items-center rounded-full border border-zinc-800 bg-zinc-800/60 text-3xl text-blue-400">◐</div>
-          <h2 className="mt-5 text-2xl font-semibold text-zinc-50">上传文件到知识库</h2>
-          <p className="mt-2 text-sm text-zinc-400">拖拽文件至此，或点击选择文件</p>
+          <div className="grid h-16 w-16 place-items-center rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-500 text-2xl font-bold text-white shadow-[0_4px_16px_rgba(99,102,241,0.3)]">+</div>
+          <h2 className="mt-5 text-xl font-semibold text-slate-800">上传文件到知识库</h2>
+          <p className="mt-2 text-sm text-slate-400">拖拽文件至此，或点击选择文件</p>
           <div className="mt-5 flex flex-wrap justify-center gap-3">
             {uploadTypes.map((type) => (
-              <button key={type} className="rounded-full border border-zinc-800 bg-zinc-800/60 px-4 py-2 text-sm text-zinc-300 transition hover:border-zinc-700 hover:bg-zinc-800">
+              <button key={type} className="rounded-full border border-slate-200 bg-white/80 px-4 py-2 text-sm text-slate-500 transition hover:border-indigo-200 hover:bg-indigo-50/50 hover:text-indigo-600">
                 {type}
               </button>
             ))}
@@ -455,21 +329,21 @@ export default function KnowledgePage() {
               }
             }}
           />
-          <div className="mt-4 text-sm text-zinc-300">{loading === 'uploading' ? '导入中...' : status}</div>
-          {recentFileName ? <div className="mt-2 text-sm text-zinc-400">{recentFileName}</div> : null}
+          <div className="mt-4 text-sm text-slate-500">{loading === 'uploading' ? '导入中...' : status}</div>
+          {recentFileName ? <div className="mt-2 text-sm text-slate-400">{recentFileName}</div> : null}
           {uploadStats ? (
-            <div className="mt-4 grid w-full max-w-xl gap-3 rounded-2xl border border-zinc-800 bg-zinc-950/50 p-4 md:grid-cols-3">
-              <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 px-4 py-3">
-                <div className="text-xs text-zinc-500">文件数量</div>
-                <div className="mt-1 text-lg font-semibold text-zinc-50">{uploadStats.fileCount}</div>
+            <div className="mt-4 grid w-full max-w-xl gap-3 rounded-2xl border border-slate-200/70 bg-white/80 p-4 md:grid-cols-3">
+              <div className="rounded-xl border border-slate-200/70 bg-slate-50/60 px-4 py-3">
+                <div className="text-xs text-slate-400">文件数量</div>
+                <div className="mt-1 text-lg font-semibold text-slate-800">{uploadStats.fileCount}</div>
               </div>
-              <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 px-4 py-3">
-                <div className="text-xs text-zinc-500">Chunk数量</div>
-                <div className="mt-1 text-lg font-semibold text-zinc-50">{uploadStats.chunkCount}</div>
+              <div className="rounded-xl border border-slate-200/70 bg-slate-50/60 px-4 py-3">
+                <div className="text-xs text-slate-400">Chunk数量</div>
+                <div className="mt-1 text-lg font-semibold text-slate-800">{uploadStats.chunkCount}</div>
               </div>
-              <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 px-4 py-3">
-                <div className="text-xs text-zinc-500">Embedding状态</div>
-                <div className="mt-1 text-lg font-semibold text-emerald-300">{uploadStats.embeddingStatus}</div>
+              <div className="rounded-xl border border-slate-200/70 bg-slate-50/60 px-4 py-3">
+                <div className="text-xs text-slate-400">Embedding状态</div>
+                <div className="mt-1 text-lg font-semibold text-emerald-600">{uploadStats.embeddingStatus}</div>
               </div>
             </div>
           ) : null}
@@ -479,214 +353,119 @@ export default function KnowledgePage() {
       <section className="space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-xl font-semibold text-zinc-50">我的知识库</h2>
-            {selectedBase ? <p className="mt-1 text-sm text-zinc-500">当前知识库：{selectedBase.name} · {selectedBase.description || '暂无描述'}</p> : null}
+            <h2 className="section-title">我的知识库</h2>
+            {selectedBase ? <p className="mt-1 text-sm text-slate-400">当前知识库：{selectedBase.name} · {selectedBase.description || '暂无描述'}</p> : null}
           </div>
-          <button onClick={handleCreateBase} className="text-sm font-medium text-blue-400 transition hover:text-blue-300">+ 新建知识库</button>
+          <button onClick={handleCreateBase} className="text-sm font-medium text-indigo-500 transition hover:text-indigo-600">+ 新建知识库</button>
         </div>
 
-        {error ? <div className="rounded-lg border border-rose-900/60 bg-rose-950/40 px-4 py-3 text-sm text-rose-200">{error}</div> : null}
+        {error ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">{error}</div> : null}
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {knowledgeBases.map((item) => (
             <div
               key={item.id}
-              className={`rounded-lg border p-5 text-left text-zinc-100 shadow-panel backdrop-blur-2xl transition ${selectedBaseId === item.id ? 'border-blue-500/60 bg-zinc-900/95' : 'border-zinc-800 bg-zinc-900/80 hover:border-zinc-700'}`}
+              className={`card-hover rounded-2xl border p-5 text-left text-slate-700 transition ${selectedBaseId === item.id ? 'border-indigo-300 bg-indigo-50/40 shadow-[0_4px_16px_rgba(99,102,241,0.08)]' : 'border-slate-200/80 bg-white/80 hover:border-indigo-200'}`}
             >
               <button className="w-full text-left" onClick={() => setSelectedBaseId(item.id)}>
-                <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-gradient-to-br from-[#6d6371] to-[#5e5764] text-xl">📚</div>
-                <h3 className="mt-5 text-lg font-semibold text-zinc-50">{item.name}</h3>
-                <p className="mt-2 text-sm text-zinc-400">{item.description || '暂无描述'}</p>
-                <div className="mt-4 flex gap-2 text-xs text-zinc-400">
-                  <span className="rounded-full border border-zinc-800 px-2 py-1">文件 {item.documentCount || 0}</span>
-                  <span className="rounded-full border border-zinc-800 px-2 py-1">Chunk {item.chunkCount || 0}</span>
-                  <span className="rounded-full border border-zinc-800 px-2 py-1">{item.ingestionStatus || 'stored'}</span>
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 text-xl font-bold text-white shadow-[0_4px_12px_rgba(99,102,241,0.3)]">KB</div>
+                <h3 className="mt-5 text-lg font-semibold text-slate-800">{item.name}</h3>
+                <p className="mt-2 text-sm text-slate-400">{item.description || '暂无描述'}</p>
+                <div className="mt-4 flex gap-2">
+                  <span className="badge badge-muted">文件 {item.documentCount || 0}</span>
+                  <span className="badge badge-muted">Chunk {item.chunkCount || 0}</span>
+                  <span className={`badge ${item.ingestionStatus === 'failed' ? 'badge-danger' : 'badge-success'}`}>{item.ingestionStatus || 'stored'}</span>
                 </div>
               </button>
               <div className="mt-4 flex items-center gap-2">
-                <button onClick={() => setSelectedBaseId(item.id)} className="rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800">选择</button>
-                <button onClick={() => handleDeleteBase(item)} className="rounded-full border border-rose-900/50 bg-rose-950/30 px-3 py-1.5 text-xs text-rose-200 hover:bg-rose-900/40">删除知识库</button>
+                <button onClick={() => setSelectedBaseId(item.id)} className="rounded-lg border border-slate-200 bg-white/80 px-3 py-1.5 text-xs text-slate-600 transition hover:bg-slate-50">选择</button>
+                <button onClick={() => handleDeleteBase(item)} className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-600 transition hover:bg-red-100">删除知识库</button>
               </div>
             </div>
           ))}
         </div>
 
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900/80 p-5 text-zinc-100 shadow-panel backdrop-blur-2xl">
+        <div className="panel">
           <div className="flex items-center justify-between gap-3">
-            <h3 className="text-lg font-semibold text-zinc-50">知识库文件</h3>
-            <div className="text-sm text-zinc-400">{documents.length} 个文档</div>
+            <h3 className="section-title">知识库文件</h3>
+            <div className="text-sm text-slate-400">{documents.length} 个文档</div>
           </div>
           <div className="mt-4 space-y-3">
             {documents.map((doc) => (
-              <div key={doc.id} className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-4">
+              <div key={doc.id} className="rounded-xl border border-slate-200/70 bg-slate-50/60 p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <div className="font-medium text-zinc-50">{doc.displayName || doc.originalName || doc.fileName || '未命名文档'}</div>
-                    <div className="mt-1 text-xs text-zinc-500">{doc.fileType || 'unknown'} · {doc.createdAt}</div>
+                    <div className="font-medium text-slate-800">{doc.displayName || doc.originalName || doc.fileName || '未命名文档'}</div>
+                    <div className="mt-1 text-xs text-slate-400">{doc.fileType || 'unknown'} · {doc.createdAt}</div>
                   </div>
-                  <div className="rounded-full bg-zinc-800 px-3 py-1 text-xs text-zinc-300">{doc.ingestionStatus || 'stored'}</div>
+                  <span className={`badge ${doc.ingestionStatus === 'failed' ? 'badge-danger' : 'badge-success'}`}>{doc.ingestionStatus || 'stored'}</span>
                 </div>
-                <p className="mt-3 text-sm leading-6 text-zinc-300">{doc.content ? doc.content.slice(0, 220) : '暂无内容'}</p>
+                <p className="mt-3 text-sm leading-6 text-slate-500">{doc.content ? doc.content.slice(0, 220) : '暂无内容'}</p>
                 <div className="mt-3 flex items-center gap-2">
-                  <button onClick={() => openDetail(doc)} className="rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800">查看 Chunk</button>
+                  <button onClick={() => openDetail(doc)} className="rounded-lg border border-slate-200 bg-white/80 px-3 py-1.5 text-xs text-slate-600 transition hover:bg-slate-50">查看 Chunk</button>
                 </div>
               </div>
             ))}
-            {!documents.length ? <div className="rounded-lg border border-dashed border-zinc-800 bg-zinc-950/30 p-6 text-sm text-zinc-500">当前知识库还没有文档，上传一个文件试试。</div> : null}
-          </div>
-        </div>
-      </section>
-
-      <section className="mt-6 grid gap-6 xl:grid-cols-[360px_1fr_360px]">
-        <div className="panel space-y-4">
-          <h3 className="text-lg font-semibold text-zinc-50">Knowledge Chat</h3>
-          <textarea value={chatQuery} onChange={(e) => setChatQuery(e.target.value)} className="min-h-[140px] w-full rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-sm text-zinc-100 outline-none focus:border-blue-500" placeholder="输入你的问题" />
-          <button onClick={handleChat} disabled={chatLoading} className="h-11 w-full rounded-xl bg-gradient-to-r from-cyan-500 to-blue-500 text-sm font-semibold text-white transition hover:from-cyan-400 hover:to-blue-400 disabled:opacity-50">
-            {chatLoading ? 'Sending...' : 'Send'}
-          </button>
-          <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4">
-            <div className="text-xs text-zinc-500">AI 回答</div>
-            <div className="mt-2 whitespace-pre-wrap text-sm leading-7 text-zinc-200">
-              {chatAnswerParts.length
-                ? chatAnswerParts.map((part, index) =>
-                    part.type === 'reference' ? (
-                      <button key={`${part.type}-${part.citation}-${index}`} onClick={() => focusReference(part.citation)} className="mx-0.5 inline-flex items-center rounded-md border border-cyan-500/20 bg-cyan-500/10 px-2 py-0.5 text-xs font-medium text-cyan-300 hover:bg-cyan-500/20">
-                        [{part.citation}]
-                      </button>
-                    ) : (
-                      <span key={`${part.type}-${index}`}>{part.value}{' '}</span>
-                    )
-                  )
-                : chatAnswer || 'AI 回答会显示在这里。'}
-            </div>
-          </div>
-          {learningLink?.linked ? (
-            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm text-emerald-200">
-              已基于 chunk 自动生成学习任务：{learningLink.tasks?.length || 0} 个，知识点：{learningLink.knowledgePoints?.length || 0} 个。
-            </div>
-          ) : null}
-          {learningLink?.reason ? (
-            <div className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-4 text-sm text-zinc-400">{learningLink.reason}</div>
-          ) : null}
-        </div>
-
-        <div className="panel space-y-4">
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="text-lg font-semibold text-zinc-50">Chunks</h3>
-            <div className="text-sm text-zinc-500">点击 chunk 可联动引用</div>
-          </div>
-          <div className="space-y-3">
-            {chunks.map((chunk) => {
-              const selected = activeChunkIndex === chunk.chunkIndex;
-              return (
-                <div
-                  key={chunk.id}
-                  ref={(node) => {
-                    chunkRefs.current[chunk.chunkIndex] = node;
-                  }}
-                  onClick={() => focusChunk(chunk.chunkIndex)}
-                  className={`cursor-pointer rounded-2xl border p-4 transition-all duration-300 ${selected ? 'border-indigo-400 bg-indigo-500/10 shadow-[0_0_0_1px_rgba(129,140,248,0.35)] animate-pulse' : 'border-zinc-800 bg-zinc-950/60 hover:border-zinc-700'}`}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-medium text-zinc-50">{chunk.fileName}</div>
-                      <div className="text-xs text-zinc-500">Chunk #{chunk.chunkIndex}</div>
-                    </div>
-                    <span className={`rounded-full border px-2 py-1 text-xs font-medium ${similarityTone(chunk.similarity)}`}>{(chunk.similarity ?? 0).toFixed(2)}</span>
-                  </div>
-                  <p className="mt-3 line-clamp-6 whitespace-pre-wrap text-sm leading-6 text-zinc-300">{chunk.content}</p>
-                </div>
-              );
-            })}
-            {!chunks.length ? <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/30 p-4 text-sm text-zinc-500">Chunk 会显示在这里。</div> : null}
-          </div>
-        </div>
-
-        <div className="panel space-y-4">
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="text-lg font-semibold text-zinc-50">References</h3>
-            <div className="text-sm text-zinc-500">点击 reference 可定位 chunk</div>
-          </div>
-          <div className="space-y-3">
-            {chatReferences.map((item) => {
-              const active = activeCitation === item.citation;
-              return (
-                <button
-                  key={`${item.fileName}-${item.chunkIndex}-${item.citation}`}
-                  ref={(node) => {
-                    citationRefs.current[item.citation] = node;
-                  }}
-                  onClick={() => focusReference(item.citation)}
-                  className={`w-full rounded-2xl border p-4 text-left transition-all duration-300 ${active ? 'border-indigo-400 bg-indigo-500/10 shadow-[0_0_0_1px_rgba(129,140,248,0.35)]' : 'border-zinc-800 bg-zinc-950/60 hover:border-zinc-700'}`}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm font-medium text-zinc-50">[{item.citation}] {item.fileName}</div>
-                    <span className={`rounded-full border px-2 py-1 text-xs font-medium ${similarityTone(item.similarity)}`}>{(item.similarity ?? 0).toFixed(2)}</span>
-                  </div>
-                  <div className="mt-1 text-xs text-zinc-500">Chunk #{item.chunkIndex}</div>
-                </button>
-              );
-            })}
-            {!chatReferences.length ? <div className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/30 p-4 text-sm text-zinc-500">引用会显示在这里。</div> : null}
+            {!documents.length ? <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/40 p-6 text-sm text-slate-400">当前知识库还没有文档，上传一个文件试试。</div> : null}
           </div>
         </div>
       </section>
 
       {uploadDialogOpen && pendingUploadFile ? (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 px-4 py-6">
-          <div className="w-full max-w-md rounded-2xl border border-zinc-700 bg-zinc-950 p-5 text-zinc-100 shadow-2xl">
-            <div className="text-lg font-semibold text-zinc-50">填写文件名</div>
-            <p className="mt-1 text-sm text-zinc-500">你可以为这次导入指定一个更清晰的知识库名称，或者直接用文件名。</p>
-            <label className="mt-4 block text-sm text-zinc-400">名称</label>
-            <input value={uploadDraftName} onChange={(e) => setUploadDraftName(e.target.value)} className="mt-2 w-full rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 text-sm text-zinc-100 outline-none focus:border-blue-500" placeholder="例如：高数第1章资料" />
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/30 px-4 py-6 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 text-slate-700 shadow-[0_20px_60px_rgba(15,23,42,0.12)]">
+            <div className="text-lg font-semibold text-slate-800">填写文件名</div>
+            <p className="mt-1 text-sm text-slate-400">你可以为这次导入指定一个更清晰的知识库名称，或者直接用文件名。</p>
+            <label className="mt-4 block text-sm text-slate-500">名称</label>
+            <input value={uploadDraftName} onChange={(e) => setUploadDraftName(e.target.value)} className="input-field mt-2" placeholder="例如：高数第1章资料" />
             <div className="mt-4 flex items-center justify-between gap-3">
-              <button onClick={() => { setUploadDialogOpen(false); setPendingUploadFile(null); }} className="rounded-full border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm text-zinc-200 hover:bg-zinc-800">取消</button>
-              <button onClick={() => { const name = uploadDraftName.trim() || pendingUploadFile.name.replace(/\.[^.]+$/, ''); handleUpload(pendingUploadFile, name); }} className="rounded-full bg-blue-500 px-4 py-2 text-sm font-medium text-white hover:bg-blue-400">确认导入</button>
+              <button onClick={() => { setUploadDialogOpen(false); setPendingUploadFile(null); }} className="btn-ghost">取消</button>
+              <button onClick={() => { const name = uploadDraftName.trim() || pendingUploadFile.name.replace(/\.[^.]+$/, ''); handleUpload(pendingUploadFile, name); }} className="btn-primary">确认导入</button>
             </div>
           </div>
         </div>
       ) : null}
 
       {detailOpen && selectedDocument ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-3 py-4">
-          <div className="flex max-h-[82vh] w-full max-w-[920px] flex-col overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-950 text-zinc-100 shadow-2xl">
-            <div className="flex items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 px-3 py-4 backdrop-blur-sm">
+          <div className="flex max-h-[82vh] w-full max-w-[920px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-[0_20px_60px_rgba(15,23,42,0.12)]">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200/70 px-4 py-3">
               <div className="min-w-0">
-                <h3 className="truncate text-base font-semibold text-zinc-50">文档 Chunk</h3>
-                <p className="mt-1 truncate text-[11px] text-zinc-500">{selectedDocument.displayName || selectedDocument.originalName || selectedDocument.fileName || '未命名文档'}</p>
+                <h3 className="truncate text-base font-semibold text-slate-800">文档 Chunk</h3>
+                <p className="mt-1 truncate text-[11px] text-slate-400">{selectedDocument.displayName || selectedDocument.originalName || selectedDocument.fileName || '未命名文档'}</p>
               </div>
-              <button onClick={() => setDetailOpen(false)} className="shrink-0 rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs text-zinc-200 hover:bg-zinc-800">关闭</button>
+              <button onClick={() => setDetailOpen(false)} className="shrink-0 rounded-lg border border-slate-200 bg-white/80 px-3 py-1 text-xs text-slate-600 transition hover:bg-slate-50">关闭</button>
             </div>
             <div className="flex-1 overflow-y-auto px-4 py-4">
               <div className="grid gap-3 md:grid-cols-2">
-                <div className="rounded-xl border border-zinc-800 bg-zinc-900/80 p-3">
-                  <div className="text-[11px] text-zinc-500">文件内容预览</div>
-                  <div className="mt-2 max-h-[140px] overflow-auto text-[13px] leading-5 text-zinc-200">{selectedDocument.content || '暂无内容'}</div>
+                <div className="rounded-xl border border-slate-200/70 bg-slate-50/60 p-3">
+                  <div className="text-[11px] text-slate-400">文件内容预览</div>
+                  <div className="mt-2 max-h-[140px] overflow-auto text-[13px] leading-5 text-slate-700">{selectedDocument.content || '暂无内容'}</div>
                 </div>
-                <div className="rounded-xl border border-zinc-800 bg-zinc-900/80 p-3">
-                  <div className="text-[11px] text-zinc-500">文件信息</div>
-                  <div className="mt-2 text-[12px] text-zinc-300">文件类型：{selectedDocument.fileType || 'unknown'}</div>
-                  <div className="mt-1 text-[12px] text-zinc-300">Chunk 数量：{selectedDocument.chunkCount || chunks.length || 0}</div>
+                <div className="rounded-xl border border-slate-200/70 bg-slate-50/60 p-3">
+                  <div className="text-[11px] text-slate-400">文件信息</div>
+                  <div className="mt-2 text-[12px] text-slate-600">文件类型：{selectedDocument.fileType || 'unknown'}</div>
+                  <div className="mt-1 text-[12px] text-slate-600">Chunk 数量：{selectedDocument.chunkCount || chunks.length || 0}</div>
                 </div>
               </div>
-              <div className="mt-3 rounded-xl border border-zinc-800 bg-zinc-900/80 p-3">
+              <div className="mt-3 rounded-xl border border-slate-200/70 bg-slate-50/60 p-3">
                 <div className="flex items-center justify-between">
-                  <div className="text-[11px] text-zinc-500">Chunk 列表</div>
-                  {detailLoading ? <div className="text-[11px] text-blue-400">加载中...</div> : null}
+                  <div className="text-[11px] text-slate-400">Chunk 列表</div>
+                  {detailLoading ? <div className="text-[11px] text-indigo-500">加载中...</div> : null}
                 </div>
                 <div className="mt-3 space-y-3">
                   {chunks.map((chunk) => (
-                    <button key={chunk.id} onClick={() => alert(chunk.content)} className="w-full rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 text-left transition hover:border-zinc-700 hover:bg-zinc-900">
-                      <div className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-500"><span>Chunk #{chunk.chunkIndex}</span></div>
-                      <pre className="mt-2 max-h-[160px] overflow-auto whitespace-pre-wrap rounded-lg bg-black/30 p-3 text-[12px] leading-5 text-zinc-200">{chunk.content}</pre>
+                    <button key={chunk.id} onClick={() => alert(chunk.content)} className="w-full rounded-lg border border-slate-200/70 bg-white/80 p-3 text-left transition hover:border-indigo-200 hover:bg-indigo-50/30">
+                      <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400"><span>Chunk #{chunk.chunkIndex}</span></div>
+                      <pre className="mt-2 max-h-[160px] overflow-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-[12px] leading-5 text-slate-700">{chunk.content}</pre>
                     </button>
                   ))}
-                  {!chunks.length ? <div className="text-sm text-zinc-500">当前文档暂无 Chunk。</div> : null}
+                  {!chunks.length ? <div className="text-sm text-slate-400">当前文档暂无 Chunk。</div> : null}
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-3 border-t border-zinc-800 px-4 py-3">
-              <button onClick={deleteDocument} className="rounded-full bg-rose-600 px-4 py-2 text-xs font-medium text-white hover:bg-rose-500">删除文档</button>
+            <div className="flex items-center gap-3 border-t border-slate-200/70 px-4 py-3">
+              <button onClick={deleteDocument} className="btn-danger">删除文档</button>
             </div>
           </div>
         </div>

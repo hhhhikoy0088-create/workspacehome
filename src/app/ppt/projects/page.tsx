@@ -4,19 +4,23 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { WorkspaceShell } from '@/components/workspace-shell';
 import request from '@/api/request';
-
-const USER_ID = 'demo-user';
+import { useAuthStore } from '@/components/auth-provider';
 
 export default function PptProjectsPage() {
+  const { user, isLogin } = useAuthStore();
   const [projects, setProjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   useEffect(() => {
     const load = async () => {
+      if (!isLogin || !user?.id) {
+        setLoading(false);
+        return;
+      }
       try {
         setLoading(true);
-        const data = await request.get(`/ppt-projects?userId=${USER_ID}`);
+        const data = await request.get(`/ppt-projects?userId=${user.id}`);
         setProjects(Array.isArray(data) ? data : []);
       } catch (err: any) {
         setError(err.message || '加载项目失败');
@@ -25,7 +29,7 @@ export default function PptProjectsPage() {
       }
     };
     load();
-  }, []);
+  }, [isLogin, user?.id]);
 
   return (
     <WorkspaceShell active="/office-hub">

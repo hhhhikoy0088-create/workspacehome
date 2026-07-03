@@ -8,6 +8,7 @@ import { FileUpload } from '@/components/meeting/FileUpload';
 import { TranscriptPanel } from '@/components/meeting/TranscriptPanel';
 import { SummaryPanel } from '@/components/meeting/SummaryPanel';
 import { ExportToolbar } from '@/components/meeting/ExportToolbar';
+import { motion } from 'framer-motion';
 
 type Tab = 'record' | 'upload' | 'text';
 
@@ -41,7 +42,6 @@ export default function MeetingPage() {
       setTranscript('');
       setSummary(null);
 
-      // 上传并转录
       const formData = new FormData();
       formData.append('file', audioBlob);
 
@@ -58,7 +58,6 @@ export default function MeetingPage() {
       const { text } = await transcribeResponse.json();
       setTranscript(text);
 
-      // 生成摘要
       const summaryResponse = await fetch('/api/meeting/summary', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -93,7 +92,6 @@ export default function MeetingPage() {
       const formData = new FormData();
       formData.append('file', file);
 
-      // 模拟进度
       const progressInterval = setInterval(() => {
         setUploadProgress((prev) => Math.min(prev + 10, 90));
       }, 200);
@@ -114,7 +112,6 @@ export default function MeetingPage() {
       const { text } = await response.json();
       setTranscript(text);
 
-      // 生成摘要
       const summaryResponse = await fetch('/api/meeting/summary', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -146,7 +143,6 @@ export default function MeetingPage() {
       setIsLoading(true);
       setTranscript(text);
 
-      // 直接生成摘要
       const response = await fetch('/api/meeting/summary', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -178,117 +174,120 @@ export default function MeetingPage() {
     }
   };
 
+  const tabs: { key: Tab; label: string }[] = [
+    { key: 'record', label: '实时录音' },
+    { key: 'upload', label: '上传文件' },
+    { key: 'text', label: '输入文字' },
+  ];
+
   return (
     <WorkspaceShell active="/meeting">
-      <div className="mb-4 flex items-center justify-between">
-        <Link
-          href="/office-hub"
-          className="inline-flex items-center gap-2 rounded-full border border-zinc-800 bg-zinc-800/60 px-4 py-2 text-sm text-zinc-300 transition hover:border-zinc-700 hover:bg-zinc-800"
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-3xl border border-white/5 bg-gradient-to-br from-zinc-950 via-zinc-950 to-slate-950 p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)] md:p-8">
+        {/* Hero */}
+        <motion.div
+          initial={{ opacity: 0, y: -12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4 }}
+          className="mb-6 shrink-0"
         >
-          <span>←</span>
-          返回办公效率中心
-        </Link>
-      </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium tracking-[0.3em] text-violet-300/80">MEETING MINUTES</p>
+              <h1 className="mt-3 text-3xl font-semibold tracking-tight text-zinc-50 md:text-4xl">AI 会议纪要</h1>
+              <p className="mt-3 max-w-2xl text-sm leading-7 text-zinc-400">
+                实时转录 + AI 智能分析，生成专业会议纪要。支持录音、上传音频、粘贴文字三种输入方式。
+              </p>
+            </div>
+            <Link
+              href="/office-hub"
+              className="inline-flex items-center gap-2 rounded-full border border-zinc-800 bg-zinc-800/60 px-4 py-2 text-sm text-zinc-300 transition hover:border-zinc-700 hover:bg-zinc-800"
+            >
+              <span>←</span>
+              返回
+            </Link>
+          </div>
+        </motion.div>
 
-      <div className="panel">
-        <h1 className="text-3xl font-semibold text-zinc-50">AI 会议纪要</h1>
-        <p className="mt-2 text-sm text-zinc-400">
-          实时转录 + AI 智能分析，生成专业会议纪要
-        </p>
-      </div>
+        {/* Error */}
+        {error && (
+          <div className="mb-4 rounded-2xl border border-rose-900/40 bg-rose-950/30 px-4 py-3 text-sm text-rose-200">
+            {error}
+          </div>
+        )}
 
-      {/* Tab 切换 */}
-      {!transcript && (
-        <div className="flex gap-4 border-b border-zinc-800 pb-4">
-          <button
-            onClick={() => setActiveTab('record')}
-            className={`px-4 py-2 text-sm font-medium transition ${
-              activeTab === 'record'
-                ? 'border-b-2 border-blue-500 text-blue-400'
-                : 'text-zinc-400 hover:text-zinc-300'
-            }`}
-          >
-            🎤 实时录音
-          </button>
-          <button
-            onClick={() => setActiveTab('upload')}
-            className={`px-4 py-2 text-sm font-medium transition ${
-              activeTab === 'upload'
-                ? 'border-b-2 border-blue-500 text-blue-400'
-                : 'text-zinc-400 hover:text-zinc-300'
-            }`}
-          >
-            📁 上传文件
-          </button>
-          <button
-            onClick={() => setActiveTab('text')}
-            className={`px-4 py-2 text-sm font-medium transition ${
-              activeTab === 'text'
-                ? 'border-b-2 border-blue-500 text-blue-400'
-                : 'text-zinc-400 hover:text-zinc-300'
-            }`}
-          >
-            📝 输入文字
-          </button>
-        </div>
-      )}
-
-      {error && (
-        <div className="rounded-lg border border-rose-900/40 bg-rose-950/30 px-4 py-3 text-sm text-rose-200">
-          ⚠️ {error}
-        </div>
-      )}
-
-      {/* 输入阶段 */}
-      {!transcript && (
-        <div className="panel">
-          {activeTab === 'record' && (
-            <Recorder onRecordComplete={handleRecordComplete} disabled={isLoading} />
+        {/* Content */}
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {/* Tab 切换 */}
+          {!transcript && (
+            <div className="mb-5 flex gap-2 border-b border-zinc-800 pb-3">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setActiveTab(tab.key)}
+                  className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                    activeTab === tab.key
+                      ? 'border border-violet-500/30 bg-violet-500/10 text-violet-300'
+                      : 'text-zinc-400 hover:bg-zinc-900/60 hover:text-zinc-300'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
           )}
 
-          {activeTab === 'upload' && (
-            <FileUpload
-              onFileSelect={handleFileSelect}
-              isLoading={isLoading}
-              error={error}
-            />
+          {/* 输入阶段 */}
+          {!transcript && (
+            <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/60 p-5 shadow-[0_8px_32px_rgba(0,0,0,0.35)] backdrop-blur-xl">
+              {activeTab === 'record' && (
+                <Recorder onRecordComplete={handleRecordComplete} disabled={isLoading} />
+              )}
+
+              {activeTab === 'upload' && (
+                <FileUpload
+                  onFileSelect={handleFileSelect}
+                  isLoading={isLoading}
+                  error={error}
+                />
+              )}
+
+              {activeTab === 'text' && (
+                <div className="flex flex-col gap-4">
+                  <textarea
+                    ref={textInputRef}
+                    placeholder="粘贴会议记录、笔记或转录文本..."
+                    className="h-64 w-full resize-none rounded-xl border border-zinc-800 bg-zinc-950/60 px-4 py-3 text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-violet-500/50 focus:ring-1 focus:ring-violet-500/30"
+                  />
+                  <button
+                    onClick={handleTextSubmit}
+                    disabled={isLoading}
+                    className="w-full rounded-xl bg-gradient-to-r from-violet-500 to-purple-500 px-4 py-3 font-semibold text-white transition hover:from-violet-400 hover:to-purple-400 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isLoading ? '生成中...' : '生成纪要'}
+                  </button>
+                </div>
+              )}
+            </div>
           )}
 
-          {activeTab === 'text' && (
-            <div className="flex flex-col gap-4">
-              <textarea
-                ref={textInputRef}
-                placeholder="粘贴会议记录、笔记或转录文本..."
-                className="w-full h-64 rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-3 text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 resize-none"
-              />
-              <button
-                onClick={handleTextSubmit}
+          {/* 输出阶段 */}
+          {transcript && (
+            <div className="space-y-5">
+              <ExportToolbar
+                transcript={transcript}
+                summary={summary}
                 disabled={isLoading}
-                className="w-full rounded-lg bg-blue-500 px-4 py-3 font-semibold text-white transition hover:bg-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isLoading ? '⏳ 生成中...' : '✨ 生成纪要'}
-              </button>
+                onReset={handleNewMeeting}
+              />
+
+              <div className="grid gap-5 xl:grid-cols-2">
+                <TranscriptPanel text={transcript} isLoading={isLoading} />
+                <SummaryPanel data={summary} isLoading={isLoading} />
+              </div>
             </div>
           )}
         </div>
-      )}
-
-      {/* 输出阶段 */}
-      {transcript && (
-        <div className="space-y-6">
-          <ExportToolbar
-            transcript={transcript}
-            summary={summary}
-            disabled={isLoading}
-            onReset={handleNewMeeting}
-          />
-
-          <div className="grid gap-6 xl:grid-cols-2">
-            <TranscriptPanel text={transcript} isLoading={isLoading} />
-            <SummaryPanel data={summary} isLoading={isLoading} />
-          </div>
-        </div>
-      )}
+      </div>
     </WorkspaceShell>
   );
 }

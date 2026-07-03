@@ -1,0 +1,12 @@
+node_modules/
+.next/
+server/node_modules/
+.git/
+*.md
+*.log
+.DS_Store
+Thumbs.db
+server/outputs/ppt/*
+server/uploads/*
+*.db-wal
+*.db-shm

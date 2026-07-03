@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import request from '@/api/request';
+import { writeAuthSession } from '@/lib/auth-session';
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -48,17 +49,22 @@ export default function RegisterPage() {
         password: form.password,
         code: form.code
       });
-      const user = result?.user;
+      const user = result?.user ?? result?.data?.user;
+      const token = result?.token ?? result?.data?.token ?? '';
       if (user) {
-        localStorage.setItem(
-          'workspace-profile',
-          JSON.stringify({
+        writeAuthSession({
+          user: {
             id: user.id,
             name: user.name || '未命名用户',
+            nickname: user.nickname || user.name || '未命名用户',
             avatar: user.avatar || (user.name || '未').slice(0, 1),
-            isLoggedIn: true
-          })
-        );
+            identity: user.identity || '',
+            profession: user.profession || '',
+            goal: user.goal || '',
+            goalTargetDate: user.goalTargetDate || user.goal_target_date || ''
+          },
+          token
+        });
       }
       setMessage('注册成功，正在跳转登录页...');
       router.push('/auth/login');

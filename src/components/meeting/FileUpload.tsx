@@ -49,14 +49,20 @@ export function FileUpload({ onFileSelect, isLoading, error }: FileUploadProps) 
         onDragOver={handleDragOver}
         onDrop={handleDrop}
         onClick={() => fileInputRef.current?.click()}
-        className="flex min-h-[200px] flex-col items-center justify-center rounded-xl border-2 border-dashed border-zinc-700 bg-zinc-900/80 p-6 text-center transition hover:border-blue-500 hover:bg-zinc-800/60 cursor-pointer"
+        className="flex min-h-[200px] cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-zinc-700 bg-zinc-950/40 p-6 text-center transition hover:border-violet-500/50 hover:bg-zinc-900/50"
       >
-        <div className="text-4xl">🎵</div>
-        <div className="mt-2 text-sm font-semibold text-zinc-50">拖拽音频文件至此或点击上传</div>
+        <div className="grid h-14 w-14 place-items-center rounded-2xl border border-violet-500/30 bg-violet-500/10 text-violet-300">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 18V5l12-2v13" />
+            <circle cx="6" cy="18" r="3" />
+            <circle cx="18" cy="16" r="3" />
+          </svg>
+        </div>
+        <div className="mt-3 text-sm font-semibold text-zinc-50">拖拽音频文件至此或点击上传</div>
         <div className="mt-1 text-xs text-zinc-500">支持 MP3、WAV、M4A、WEBM 格式</div>
       </div>
 
-      {error && <div className="rounded-lg border border-rose-900/40 bg-rose-950/30 px-4 py-3 text-sm text-rose-200">{error}</div>}
+      {error && <div className="rounded-xl border border-rose-900/40 bg-rose-950/30 px-4 py-3 text-sm text-rose-200">{error}</div>}
 
       <input
         ref={fileInputRef}

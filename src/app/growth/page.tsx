@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { WorkspaceShell } from '@/components/workspace-shell';
 import request from '@/api/request';
+import { useAuthStore } from '@/components/auth-provider';
 
 const chartBars = [18, 30, 42, 24, 50, 62, 48];
 
@@ -13,6 +14,7 @@ function unwrapApiData<T>(value: T | { success?: boolean; data?: T } | null | un
 }
 
 export default function GrowthPage() {
+  const { user, isLogin } = useAuthStore();
   const [stats, setStats] = useState({
     learning: { studyHours: 0, todayTasks: 0, completionRate: 0, streak: 0, pendingTasks: 0 },
     knowledge: { baseCount: 0, documentCount: 0, chunkCount: 0 },
@@ -23,20 +25,22 @@ export default function GrowthPage() {
   const [insights, setInsights] = useState<string[]>(['正在生成成长洞察...']);
 
   const cards = useMemo(() => ([
-    { value: `${Math.max(0, Math.round(stats.learning.studyHours))}h`, label: '累计学习时长', color: 'text-blue-400', bar: 'bg-blue-500/60' },
-    { value: String(stats.learning.pendingTasks), label: '待处理任务', color: 'text-zinc-300', bar: 'bg-zinc-500/60' },
-    { value: String(stats.learning.todayTasks), label: '今日任务', color: 'text-zinc-300', bar: 'bg-zinc-500/60' },
-    { value: `${stats.learning.completionRate}%`, label: '学习完成率', color: 'text-emerald-400', bar: 'bg-emerald-500/60' },
-    { value: String(stats.learning.streak), label: '连续学习天数', color: 'text-zinc-400', bar: 'bg-zinc-600/60' },
-    { value: String(stats.knowledge.documentCount), label: '知识库文档', color: 'text-zinc-400', bar: 'bg-zinc-600/60' }
+    { value: `${Math.max(0, Math.round(stats.learning.studyHours))}h`, label: '累计学习时长', color: 'text-indigo-600', bar: 'bg-indigo-400/70' },
+    { value: String(stats.learning.pendingTasks), label: '待处理任务', color: 'text-slate-700', bar: 'bg-slate-400/70' },
+    { value: String(stats.learning.todayTasks), label: '今日任务', color: 'text-slate-700', bar: 'bg-slate-400/70' },
+    { value: `${stats.learning.completionRate}%`, label: '学习完成率', color: 'text-emerald-600', bar: 'bg-emerald-400/70' },
+    { value: String(stats.learning.streak), label: '连续学习天数', color: 'text-violet-600', bar: 'bg-violet-400/70' },
+    { value: String(stats.knowledge.documentCount), label: '知识库文档', color: 'text-blue-600', bar: 'bg-blue-400/70' }
   ]), [stats]);
 
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
+      if (!isLogin || !user?.id) return;
+      const uid = user.id;
       const [statsResult, profileResult] = await Promise.allSettled([
-        request.get('/dashboard?userId=demo-user'),
-        request.get('/profile/demo-user/context')
+        request.get(`/dashboard?userId=${uid}`),
+        request.get(`/profile/${uid}/context`)
       ]);
 
       if (cancelled) return;
@@ -50,8 +54,6 @@ export default function GrowthPage() {
 
       setStats(statsData);
       setProfile(profileData.user);
-      console.log('[growth] stats =', statsData);
-      console.log('[growth] profile =', profileData.user);
       const goalName = profileData.user?.goal || '考研';
       setInsights([
         `你的当前目标是 ${goalName}，建议保持每天固定复盘。`,
@@ -69,20 +71,20 @@ export default function GrowthPage() {
       cancelled = true;
       window.removeEventListener('workspace-data-updated', load);
     };
-  }, []);
+  }, [isLogin, user?.id]);
 
   return (
     <WorkspaceShell active="/growth">
       <div className="panel">
-        <div className="border-b border-zinc-800 pb-4">
-          <p className="text-sm font-semibold text-zinc-50">成长仪表盘</p>
+        <div className="border-b border-slate-200/70 pb-4">
+          <p className="gradient-text text-lg font-bold">成长仪表盘</p>
         </div>
 
         <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {cards.map((item) => (
-            <div key={item.label} className="rounded-lg border border-zinc-800 bg-zinc-800/60 p-5">
-              <div className={`text-4xl font-semibold ${item.color}`}>{item.value}</div>
-              <div className="mt-2 text-sm text-zinc-500">{item.label}</div>
+            <div key={item.label} className="card-hover rounded-2xl border border-slate-200/70 bg-white/80 p-5">
+              <div className={`text-4xl font-bold ${item.color}`}>{item.value}</div>
+              <div className="mt-2 text-sm text-slate-400">{item.label}</div>
               <div className="mt-8 flex h-12 items-end gap-1">
                 {chartBars.map((h, i) => <div key={i} className={`w-full rounded-t-md ${item.bar}`} style={{ height: `${h}%` }} />)}
               </div>
@@ -90,15 +92,15 @@ export default function GrowthPage() {
           ))}
         </div>
 
-        <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-800/40 p-6">
-          <div className="text-lg font-semibold text-zinc-50">成长洞察</div>
-          <div className="mt-4 rounded-lg border border-zinc-800 bg-zinc-900/60 p-5 text-zinc-400">
+        <div className="mt-4 rounded-2xl border border-slate-200/70 bg-slate-50/80 p-6">
+          <div className="section-title">成长洞察</div>
+          <div className="mt-4 rounded-2xl border border-slate-200/70 bg-white/80 p-5 text-slate-500">
             <p className="leading-8">你的成长数据会根据学习、任务、文件与知识库实时变化：</p>
             <ul className="mt-4 space-y-3 text-sm leading-7">
               {insights.map((item, index) => (
-                <li key={item}>
-                  <span className="mr-2 text-blue-400">·</span>
-                  <span className={index === 0 ? 'text-zinc-200' : 'text-zinc-400'}>{item}</span>
+                <li key={item} className="flex items-start gap-2">
+                  <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-400" />
+                  <span className={index === 0 ? 'text-slate-700' : 'text-slate-500'}>{item}</span>
                 </li>
               ))}
             </ul>
