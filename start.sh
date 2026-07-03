@@ -1,70 +1,48 @@
 #!/bin/bash
-set -e
 
 echo "=== Starting Shrimp Workspace ==="
 
-# Ensure data dirs exist
+# Ensure data directories exist
 mkdir -p /app/server/outputs/ppt /app/server/uploads /app/data
 
-# Copy bundled db to data volume if it doesn't exist yet
+# Copy bundled db to persistent volume if it doesn't exist yet
 if [ -f /app/server/market.db ] && [ ! -f /app/data/market.db ]; then
   echo "[init] Copying bundled database to persistent volume..."
   cp /app/server/market.db /app/data/market.db
 fi
 
-# Start Express backend in background
-start_backend() {
-  echo "[1/2] Starting Express backend on port $BACKEND_PORT..."
-  cd /app/server
-  if [ -x /app/server/node_modules/.bin/tsx ]; then
-    TSX=/app/server/node_modules/.bin/tsx
-  elif [ -x /app/node_modules/.bin/tsx ]; then
-    TSX=/app/node_modules/.bin/tsx
-  else
-    echo "[error] tsx not found"
-    exit 1
-  fi
+# ---- Start Express backend ----
+echo "[1/2] Starting Express backend on port ${BACKEND_PORT:-3001}..."
+cd /app/server
+if [ -x /app/server/node_modules/.bin/tsx ]; then
+  TSX=/app/server/node_modules/.bin/tsx
+elif [ -x /app/node_modules/.bin/tsx ]; then
+  TSX=/app/node_modules/.bin/tsx
+else
+  echo "[warn] tsx not found, trying npx..."
+  TSX="npx tsx"
+fi
 
-  $TSX index.js &
-  BACKEND_PID=$!
-  echo "Backend PID: $BACKEND_PID"
+$TSX index.js &
+BACKEND_PID=$!
+echo "Backend PID: $BACKEND_PID"
 
-  for i in {1..15}; do
-    STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:$BACKEND_PORT/api/ping 2>/dev/null || echo "000")
-    if [ "$STATUS" = "200" ]; then
-      echo "[ok] Backend ready after ${i}s (HTTP $STATUS)"
-      return 0
-    fi
-    echo "[wait] Backend not ready yet (HTTP $STATUS), retry ${i}/15"
-    sleep 1
-  done
+# Give backend a moment to initialise
+sleep 2
 
-  echo "[error] Backend failed to start."
-  exit 1
-}
-
-start_backend
-
-# Start Next.js frontend in background
-echo "[2/2] Starting Next.js frontend on port $PORT..."
+# ---- Start Next.js frontend ----
+echo "[2/2] Starting Next.js frontend on port ${PORT:-3000}..."
 cd /app
 node server.js &
 FRONTEND_PID=$!
 echo "Frontend PID: $FRONTEND_PID"
 
-for i in {1..15}; do
-  STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:$PORT/api/ping 2>/dev/null || echo "000")
-  if [ "$STATUS" = "200" ]; then
-    echo "[ok] Frontend ready after ${i}s (HTTP $STATUS)"
-    break
-  fi
-  echo "[wait] Frontend not ready yet (HTTP $STATUS), retry ${i}/15"
-  sleep 1
-done
-
 echo "=== Both services started ==="
+echo "Backend:  http://127.0.0.1:${BACKEND_PORT:-3001}"
+echo "Frontend: http://127.0.0.1:${PORT:-3000}"
 
-# Keep script as PID 1, handle signals
+# ---- Keep the container alive ----
+# Trap signals for graceful shutdown
 shutdown() {
   echo "Shutting down..."
   kill $FRONTEND_PID $BACKEND_PID 2>/dev/null || true
@@ -73,5 +51,5 @@ shutdown() {
 }
 trap shutdown SIGTERM SIGINT
 
-# Keep the script alive
-wait $FRONTEND_PID $BACKEND_PID
+# Block forever (until a child exits or signal received)
+wait
