@@ -18,8 +18,23 @@ npx tsx index.js &
 BACKEND_PID=$!
 echo "Backend PID: $BACKEND_PID"
 
-# Give backend a moment to initialise
+# Give backend a moment to initialise, then wait until it is ready
 sleep 2
+
+BACKEND_URL="http://127.0.0.1:${BACKEND_PORT:-3001}/api/ping"
+echo "Waiting for backend to be ready at ${BACKEND_URL}..."
+for i in $(seq 1 60); do
+  if curl -sf "${BACKEND_URL}" >/dev/null 2>&1; then
+    echo "Backend ready after ${i}s"
+    break
+  fi
+  echo "  Backend not ready yet (${i}/60)..."
+  sleep 1
+done
+
+if ! curl -sf "${BACKEND_URL}" >/dev/null 2>&1; then
+  echo "WARNING: Backend did not become ready in 60s; starting frontend anyway"
+fi
 
 # ---- Start Next.js frontend ----
 echo "[2/2] Starting Next.js frontend on port ${PORT:-3000}..."
