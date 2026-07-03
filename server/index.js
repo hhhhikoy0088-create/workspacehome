@@ -427,7 +427,12 @@ async function callPptAi(messages, options = {}) {
    基础健康检查
 ========================================= */
 app.get('/api/ping', (req, res) => {
-  res.json({ status: 'ok' });
+  res.json({
+    status: 'ok',
+    version: '83e5baf-with-resend',
+    resendConfigured: !!process.env.RESEND_API_KEY,
+    smtpConfigured: !!(process.env.MAIL_USER && process.env.MAIL_PASS)
+  });
 });
 
 ensureDemoUser();
