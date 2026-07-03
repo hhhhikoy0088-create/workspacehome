@@ -30,10 +30,12 @@ start_backend() {
   echo "Backend PID: $BACKEND_PID"
 
   for i in {1..15}; do
-    if curl -s http://127.0.0.1:$BACKEND_PORT/api/ping > /dev/null 2>&1; then
-      echo "[ok] Backend ready after ${i}s"
+    STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:$BACKEND_PORT/api/ping 2>/dev/null || echo "000")
+    if [ "$STATUS" = "200" ]; then
+      echo "[ok] Backend ready after ${i}s (HTTP $STATUS)"
       return 0
     fi
+    echo "[wait] Backend not ready yet (HTTP $STATUS), retry ${i}/15"
     sleep 1
   done
 
@@ -51,10 +53,12 @@ FRONTEND_PID=$!
 echo "Frontend PID: $FRONTEND_PID"
 
 for i in {1..15}; do
-  if curl -s http://127.0.0.1:$PORT/ > /dev/null 2>&1; then
-    echo "[ok] Frontend ready after ${i}s"
+  STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:$PORT/api/ping 2>/dev/null || echo "000")
+  if [ "$STATUS" = "200" ]; then
+    echo "[ok] Frontend ready after ${i}s (HTTP $STATUS)"
     break
   fi
+  echo "[wait] Frontend not ready yet (HTTP $STATUS), retry ${i}/15"
   sleep 1
 done
 
