@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "=== Starting Shrimp Workspace ==="
+echo "=== Starting Workspace ==="
 
 # Ensure data directories exist
 mkdir -p /app/server/outputs/ppt /app/server/uploads /app/data
@@ -14,16 +14,7 @@ fi
 # ---- Start Express backend ----
 echo "[1/2] Starting Express backend on port ${BACKEND_PORT:-3001}..."
 cd /app/server
-if [ -x /app/server/node_modules/.bin/tsx ]; then
-  TSX=/app/server/node_modules/.bin/tsx
-elif [ -x /app/node_modules/.bin/tsx ]; then
-  TSX=/app/node_modules/.bin/tsx
-else
-  echo "[warn] tsx not found, trying npx..."
-  TSX="npx tsx"
-fi
-
-$TSX index.js &
+node index.js &
 BACKEND_PID=$!
 echo "Backend PID: $BACKEND_PID"
 

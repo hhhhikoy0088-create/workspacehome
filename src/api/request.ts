@@ -52,8 +52,9 @@ const request: any = async function request(path: string, options: RequestInit =
   try {
     payload = JSON.parse(rawResponse);
   } catch {
-    console.error('[request] JSON parse failed. raw response:', rawResponse);
-    throw new Error('Invalid JSON response from server');
+    const truncated = rawResponse.length > 200 ? rawResponse.slice(0, 200) + '...' : rawResponse;
+    console.error('[request] JSON parse failed. status:', response.status, 'raw response:', rawResponse);
+    throw new Error(`Invalid JSON response from server (status ${response.status}): ${truncated}`);
   }
 
   if (!response.ok || payload?.success === false) {
