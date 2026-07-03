@@ -5,10 +5,9 @@ WORKDIR /app
 
 # Copy package files
 COPY package.json package-lock.json* ./
-COPY server/package.json server/package-lock.json* ./server/
 
-# Install frontend deps
-RUN npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+# Install frontend deps (use npm install for flexibility)
+RUN npm install --legacy-peer-deps
 
 # Copy source and build
 COPY . .
@@ -28,12 +27,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 make g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy package files and install ALL deps (including devDeps for tsx)
+# Copy package files and install ALL deps
 COPY package.json package-lock.json* ./
-RUN npm ci --legacy-peer-deps --omit=optional || npm install --legacy-peer-deps --omit=optional
+RUN npm install --legacy-peer-deps
 
+# Install server deps
 COPY server/package.json server/package-lock.json* ./server/
-RUN cd server && (npm ci --legacy-peer-deps || npm install --legacy-peer-deps)
+RUN cd server && npm install --legacy-peer-deps
 
 # Copy built Next.js standalone
 COPY --from=frontend-builder /app/.next/standalone ./
