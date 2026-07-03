@@ -31,6 +31,26 @@ function initDatabase() {
     PRAGMA foreign_keys = ON;
   `);
 
+  // Ensure base users table exists before altering it. On fresh volumes the bundled
+  // db may be empty / missing, so we create the table with the schema expected by routes.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      email TEXT UNIQUE,
+      phone TEXT,
+      password_hash TEXT,
+      avatar TEXT,
+      role TEXT DEFAULT 'user',
+      goal_target_date TEXT,
+      nickname TEXT,
+      school TEXT,
+      region TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
   const userColumns = db.prepare(`PRAGMA table_info(users)`).all().map((row) => row.name);
   if (!userColumns.includes('goal_target_date')) {
     db.exec(`ALTER TABLE users ADD COLUMN goal_target_date TEXT`);
