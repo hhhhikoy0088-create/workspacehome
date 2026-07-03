@@ -310,7 +310,10 @@ function createMailer() {
     host: preset.host,
     port: preset.port,
     secure: preset.secure,
-    auth: { user, pass }
+    auth: { user, pass },
+    connectionTimeout: 5000,
+    socketTimeout: 5000,
+    greetingTimeout: 5000
   });
 }
 
@@ -430,13 +433,18 @@ app.post('/api/auth/send-code', async (req, res) => {
       try {
         const mailer = createMailer();
         const from = process.env.MAIL_FROM || process.env.MAIL_USER;
-        await mailer.sendMail({
+        // Race sendMail against a 6-second timeout so the request never hangs
+        const mailPromise = mailer.sendMail({
           from,
           to: email,
           subject: 'Workspace 验证码',
           text: `你的验证码是：${code}，10 分钟内有效。`,
           html: `<p>你的验证码是：<strong style="font-size:24px;letter-spacing:2px;">${code}</strong></p><p>10 分钟内有效。</p>`
         });
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Mail send timeout after 6s')), 6000)
+        );
+        await Promise.race([mailPromise, timeoutPromise]);
         mailSent = true;
         console.log('[SEND CODE MAIL SUCCESS]', { email });
       } catch (mailError) {
