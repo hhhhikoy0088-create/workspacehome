@@ -14,7 +14,7 @@ fi
 # ---- Start Express backend ----
 echo "[1/2] Starting Express backend on port ${BACKEND_PORT:-3001}..."
 cd /app/server
-node index.js &
+npx tsx index.js &
 BACKEND_PID=$!
 echo "Backend PID: $BACKEND_PID"
 

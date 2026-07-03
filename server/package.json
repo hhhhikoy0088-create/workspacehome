@@ -22,9 +22,9 @@
     "openai": "^6.45.0",
     "pdf-parse": "^2.4.5",
     "pptxgenjs": "^4.0.1",
+    "tsx": "^4.22.5",
     "uuid": "^14.0.1"
   },
   "devDependencies": {
-    "tsx": "^4.22.5"
   }
 }
