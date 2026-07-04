@@ -11,7 +11,15 @@ export async function POST(request: NextRequest) {
     const backendUrl = process.env.BACKEND_URL || 'http://127.0.0.1:3001';
     const url = `${backendUrl}/api/resume/analyze`;
 
-    console.log('[Resume Route] forwarding to', url, 'file:', formData.get('file')?.name || 'N/A');
+    const file = formData.get('file') as File | null;
+    if (!file) {
+      return NextResponse.json(
+        { success: false, message: '缺少文件' },
+        { status: 400 }
+      );
+    }
+
+    console.log('[Resume Route] forwarding to', url, 'file:', file.name || 'N/A');
 
     const response = await fetch(url, {
       method: 'POST',
