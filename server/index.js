@@ -952,13 +952,13 @@ app.get('/api/profile/:id', (req, res) => {
 
 app.put('/api/profile/:id', (req, res) => {
   const updated = updateUserProfile(req.params.id, req.body);
-  if (!updated) return res.status(404).json({ message: 'User not found' });
+  if (!updated) return res.status(404).json({ success: false, message: '用户不存在，请先注册或重新登录', code: 'USER_NOT_FOUND' });
   res.json(buildProfileEngine(updated, req.params.id));
 });
 
 app.patch('/api/profile/:id', (req, res) => {
   const updated = updateUserProfile(req.params.id, req.body);
-  if (!updated) return res.status(404).json({ message: 'User not found' });
+  if (!updated) return res.status(404).json({ success: false, message: '用户不存在，请先注册或重新登录', code: 'USER_NOT_FOUND' });
   res.json(buildProfileEngine(updated, req.params.id));
 });
 
@@ -1330,7 +1330,10 @@ function calculateNodeMastery(nodeId, totalExercises) {
 
 function buildCoachContext(userId) {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
-  if (!user) throw new Error('User not found');
+  if (!user) {
+    console.warn('[buildCoachContext] 用户不存在:', userId);
+    return { user: serializeUser(null), goalContext: getGoalContext(), plan: null, tasks: [], progress: { learningProgress: 0, todayTasks: 0, completionRate: 0, streakDays: 0 }, pathRecommendation: [], wrongAnswers: [] };
+  }
 
   const planRecord = db.prepare('SELECT * FROM study_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT 1').get(userId);
   const goalContext = getGoalContext(user?.goal, user?.goal_target_date);
@@ -1446,7 +1449,7 @@ app.post('/api/learning/coach', (req, res) => {
     if (!knowledgeBaseId) return res.status(400).json({ message: 'knowledgeBaseId is required' });
 
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
-    if (!user) return res.status(404).json({ message: 'User not found' });
+    if (!user) return res.status(404).json({ success: false, message: '用户不存在，请先注册或重新登录', code: 'USER_NOT_FOUND' });
 
     // 清除该用户旧的学习教练任务和计划（保持单一当前计划）
     db.prepare('DELETE FROM tasks WHERE user_id = ? AND source = ?').run(userId, 'learning-coach');
