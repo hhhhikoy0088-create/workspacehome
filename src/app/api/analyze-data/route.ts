@@ -75,18 +75,13 @@ export async function POST(req: Request) {
 ${JSON.stringify(summary, null, 2)}`;
 
     const completion = await getClient().chat.completions.create({
-      model: process.env.DEEPSEEK_MODEL || 'deepseek-v4-pro',
+      model: process.env.DEEPSEEK_FAST_MODEL || 'deepseek-chat',
       messages: [
         { role: 'system', content: '只输出严格 JSON，不要解释。' },
         { role: 'user', content: prompt }
       ],
       temperature: 0.2,
-      max_tokens: 2500,
-      // deepseek-v4-pro 推理模型参数
-      // @ts-expect-error reasoning_effort 是 deepseek 特有参数
-      reasoning_effort: 'high',
-      // @ts-expect-error extra_body 是 openai SDK 支持的扩展字段
-      extra_body: { thinking: { type: 'enabled' } },
+      max_tokens: 2500
     });
 
     const content = completion.choices[0]?.message?.content || '';

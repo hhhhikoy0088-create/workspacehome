@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function POST(request: NextRequest) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 180000); // 180 秒，绕开 rewrite 30 秒限制
+
   try {
     // 提取前端传来的 multipart formData
     const formData = await request.formData();
 
     const backendUrl = process.env.BACKEND_URL || 'http://127.0.0.1:3001';
     const url = `${backendUrl}/api/resume/analyze`;
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 180000); // 180 秒，绕开 rewrite 30 秒限制
 
     console.log('[Resume Route] forwarding to', url, 'file:', formData.get('file')?.name || 'N/A');
 
@@ -18,8 +18,6 @@ export async function POST(request: NextRequest) {
       body: formData, // fetch 自动设置 multipart boundary
       signal: controller.signal,
     });
-
-    clearTimeout(timeout);
 
     if (!response.ok) {
       const text = await response.text().catch(() => 'Unknown error');
@@ -33,11 +31,12 @@ export async function POST(request: NextRequest) {
     const data = await response.json();
     return NextResponse.json(data);
   } catch (error: any) {
-    clearTimeout(timeout);
     console.error('[Resume Route] error:', error?.message || error);
     return NextResponse.json(
       { success: false, message: error?.message || '请求超时或失败，请重试' },
       { status: 504 }
     );
+  } finally {
+    clearTimeout(timeout);
   }
 }

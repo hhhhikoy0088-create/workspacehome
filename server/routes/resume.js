@@ -176,7 +176,7 @@ function buildAnalysis(resumeText) {
 async function analyzeResumeWithDeepSeek(resumeText) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   const baseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
-  const model = process.env.DEEPSEEK_MODEL || 'deepseek-v4-pro';
+  const model = process.env.DEEPSEEK_FAST_MODEL || 'deepseek-chat';
   if (!apiKey) throw new Error('DeepSeek API Key 未配置');
 
   console.log('[简历分析] resumeText length:', resumeText.length);
@@ -213,7 +213,7 @@ async function analyzeResumeWithDeepSeek(resumeText) {
 输入简历：
 ${resumeText}`;
 
-  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
+    const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
@@ -223,9 +223,7 @@ ${resumeText}`;
         { role: 'user', content: prompt }
       ],
       temperature: 0.2,
-      max_tokens: 2500,
-      reasoning_effort: 'high',
-      extra_body: { thinking: { type: 'enabled' } }
+      max_tokens: 2500
     })
   });
 

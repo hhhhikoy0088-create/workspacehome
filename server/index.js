@@ -375,7 +375,7 @@ function getGoalContext(goal, targetDate) {
 async function callDeepSeek(messages, options = {}) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   const baseUrl = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
-  const model = process.env.DEEPSEEK_MODEL || 'deepseek-v4-pro';
+  const model = options.model || process.env.DEEPSEEK_MODEL || 'deepseek-v4-pro';
   const timeoutMs = options.timeoutMs ?? 90000;
   const enableThinking = options.enableThinking ?? true;
   const reasoningEffort = options.reasoning_effort || options.reasoningEffort || 'high';
@@ -509,15 +509,15 @@ ${JSON.stringify(summary, null, 2)}`;
 
     console.log('[ANALYZE-DATA] 开始调用 DeepSeek，行数:', rows.length, '列数:', summary.columns.length);
 
-    // deepseek-v4-pro 是推理模型，必须保持 thinking 开启，否则返回空内容
-    // 超时设 180s 配合前端 API Route 的 AbortController 超时
     const result = await callDeepSeek([
       { role: 'system', content: '只输出严格 JSON，不要解释。' },
       { role: 'user', content: prompt }
     ], {
       temperature: 0.2,
       max_tokens: 2500,
-      timeoutMs: 180000
+      model: 'deepseek-chat',
+      enableThinking: false,
+      timeoutMs: 60000
     });
 
     const content = result?.choices?.[0]?.message?.content || '';
