@@ -8,8 +8,11 @@ export async function POST(request: NextRequest) {
     // 提取前端传来的 multipart formData
     const formData = await request.formData();
 
-    const backendUrl = process.env.BACKEND_URL || 'http://127.0.0.1:3001';
-    const url = `${backendUrl}/api/resume/analyze`;
+    const backendUrl = (process.env.BACKEND_URL || 'http://127.0.0.1:3001').replace(/\/+$/, '');
+    // 兼容 BACKEND_URL 已包含 /api 前缀的情况（如 http://127.0.0.1:3001/api/ping）
+    const url = backendUrl.endsWith('/api/ping') || backendUrl.endsWith('/api')
+      ? `${backendUrl}/resume/analyze`
+      : `${backendUrl}/api/resume/analyze`;
 
     const file = formData.get('file') as File | null;
     if (!file) {
