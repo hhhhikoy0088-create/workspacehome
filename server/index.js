@@ -177,6 +177,20 @@ app.use((req, res, next) => {
   next();
 });
 
+// 全局错误处理中间件：确保任何未捕获的异常都返回 JSON，而不是 Express 默认的 HTML
+app.use((err, req, res, next) => {
+  console.error('[GLOBAL ERROR]', err?.message || err);
+  console.error('[GLOBAL ERROR STACK]', err?.stack || '');
+  if (res.headersSent) {
+    return next(err);
+  }
+  res.status(500).json({
+    success: false,
+    message: err?.message || '服务器内部错误',
+    path: req.originalUrl
+  });
+});
+
 function createId() {
   return crypto.randomUUID();
 }
@@ -470,6 +484,7 @@ app.post('/api/analyze-data', async (req, res) => {
 
     const apiKey = process.env.DEEPSEEK_API_KEY;
     if (!apiKey) {
+      console.error('[ANALYZE-DATA ERROR] DEEPSEEK_API_KEY 未配置');
       return res.status(500).json({ success: false, message: 'DEEPSEEK_API_KEY 未配置' });
     }
 
@@ -501,17 +516,21 @@ app.post('/api/analyze-data', async (req, res) => {
 数据样本：
 ${JSON.stringify(summary, null, 2)}`;
 
-    const completion = await getOpenAIClient().chat.completions.create({
-      model: process.env.DEEPSEEK_MODEL || 'deepseek-v4-pro',
-      messages: [
-        { role: 'system', content: '只输出严格 JSON，不要解释。' },
-        { role: 'user', content: prompt }
-      ],
+    console.log('[ANALYZE-DATA] 开始调用 DeepSeek，行数:', rows.length, '列数:', summary.columns.length);
+
+    // 统一使用 callDeepSeek（与聊天、PPT 保持一致），并关闭 thinking 以减少 token 消耗
+    const result = await callDeepSeek([
+      { role: 'system', content: '只输出严格 JSON，不要解释。' },
+      { role: 'user', content: prompt }
+    ], {
       temperature: 0.2,
-      max_tokens: 2000
+      max_tokens: 2500,
+      enableThinking: false
     });
 
-    const content = completion.choices[0]?.message?.content || '';
+    const content = result?.choices?.[0]?.message?.content || '';
+    console.log('[ANALYZE-DATA] AI 原始返回长度:', content.length);
+
     if (!content.trim()) {
       return res.status(502).json({ success: false, message: 'AI 返回空内容' });
     }
@@ -521,10 +540,22 @@ ${JSON.stringify(summary, null, 2)}`;
       return res.status(502).json({
         success: false,
         message: 'AI 返回格式异常',
-        rawContent: content.slice(0, 200)
+        rawContent: content.slice(0, 500)
       });
     }
-    const parsed = JSON.parse(jsonMatch[0]);
+
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonMatch[0]);
+    } catch (parseErr) {
+      console.error('[ANALYZE-DATA JSON 解析失败]', parseErr.message);
+      console.error('[ANALYZE-DATA 原始内容]', content.slice(0, 500));
+      return res.status(502).json({
+        success: false,
+        message: `AI 返回不是有效 JSON: ${parseErr.message}`,
+        rawContent: content.slice(0, 500)
+      });
+    }
 
     return res.json({
       success: true,
@@ -534,6 +565,7 @@ ${JSON.stringify(summary, null, 2)}`;
     });
   } catch (error) {
     console.error('[ANALYZE-DATA ERROR]', error?.message || error);
+    console.error('[ANALYZE-DATA STACK]', error?.stack || '');
     return res.status(500).json({
       success: false,
       message: error?.message || '分析服务暂时不可用'
