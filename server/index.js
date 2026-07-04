@@ -10,6 +10,7 @@ const fs = require('fs');
 const multer = require('multer');
 const nodemailer = require('nodemailer');
 const { Resend } = require('resend');
+const OpenAI = require('openai');
 const { db, syncBack } = require('./db');
 const pptRoutes = require('./routes/ppt');
 const { generatePPT, normalizePPTDocument, fallbackDoc } = require('../ppt-engine/index.ts');
@@ -422,6 +423,121 @@ async function callDeepSeek(messages, options = {}) {
 async function callPptAi(messages, options = {}) {
   return callDeepSeek(messages, { ...options, temperature: options.temperature ?? 0.4, max_tokens: options.max_tokens ?? 2500, timeoutMs: options.timeoutMs ?? 90000, enableThinking: true, reasoning_effort: 'high' });
 }
+
+/* =========================================
+   AI 数据分析（后端路由）
+========================================= */
+let _openaiClient = null;
+function getOpenAIClient() {
+  if (!_openaiClient) {
+    _openaiClient = new OpenAI({
+      apiKey: process.env.DEEPSEEK_API_KEY,
+      baseURL: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'
+    });
+  }
+  return _openaiClient;
+}
+
+function normalizeAnalyzeRows(rows) {
+  return rows.map((row) => {
+    if (!row || typeof row !== 'object') return row;
+    const normalized = {};
+    for (const [key, value] of Object.entries(row)) {
+      normalized[String(key).trim()] = value;
+    }
+    return normalized;
+  });
+}
+
+function buildDatasetSummary(rows) {
+  const keys = Array.from(new Set(rows.flatMap((row) => Object.keys(row || {}))));
+  return {
+    rowCount: rows.length,
+    columns: keys,
+    sampleRows: rows.slice(0, 10)
+  };
+}
+
+app.post('/api/analyze-data', async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body?.rows) ? normalizeAnalyzeRows(req.body.rows) : [];
+
+    if (!rows.length) {
+      return res.status(400).json({ success: false, message: 'rows is required' });
+    }
+
+    const apiKey = process.env.DEEPSEEK_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ success: false, message: 'DEEPSEEK_API_KEY 未配置' });
+    }
+
+    const summary = buildDatasetSummary(rows);
+    const prompt = `你是一个数据分析助手。请基于下面的 Excel JSON 数据，输出严格 JSON。
+要求：
+1. 只能基于输入数据分析，不允许编造
+2. 返回数据概览、KPI指标、趋势分析、异常数据、风险点、建议
+3. 如果无法判断某项，返回 null 或空数组
+4. 输出必须包含 markdownSummary 字段，方便前端渲染
+
+输出格式：
+{
+  "overview": {
+    "rowCount": number,
+    "columnCount": number,
+    "keyFindings": string[]
+  },
+  "kpis": [
+    { "label": string, "value": string, "delta": string }
+  ],
+  "trendAnalysis": string[],
+  "anomalies": string[],
+  "risks": string[],
+  "suggestions": string[],
+  "markdownSummary": string
+}
+
+数据样本：
+${JSON.stringify(summary, null, 2)}`;
+
+    const completion = await getOpenAIClient().chat.completions.create({
+      model: process.env.DEEPSEEK_MODEL || 'deepseek-v4-pro',
+      messages: [
+        { role: 'system', content: '只输出严格 JSON，不要解释。' },
+        { role: 'user', content: prompt }
+      ],
+      temperature: 0.2,
+      max_tokens: 2000
+    });
+
+    const content = completion.choices[0]?.message?.content || '';
+    if (!content.trim()) {
+      return res.status(502).json({ success: false, message: 'AI 返回空内容' });
+    }
+
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return res.status(502).json({
+        success: false,
+        message: 'AI 返回格式异常',
+        rawContent: content.slice(0, 200)
+      });
+    }
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    return res.json({
+      success: true,
+      analysis: parsed,
+      summary,
+      rows: summary.sampleRows
+    });
+  } catch (error) {
+    console.error('[ANALYZE-DATA ERROR]', error?.message || error);
+    return res.status(500).json({
+      success: false,
+      message: error?.message || '分析服务暂时不可用'
+    });
+  }
+});
 
 /* =========================================
    基础健康检查
