@@ -4,6 +4,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const { db } = require('../db');
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -222,7 +223,9 @@ ${resumeText}`;
         { role: 'user', content: prompt }
       ],
       temperature: 0.2,
-      max_tokens: 2500
+      max_tokens: 2500,
+      reasoning_effort: 'high',
+      extra_body: { thinking: { type: 'enabled' } }
     })
   });
 
