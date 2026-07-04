@@ -258,10 +258,17 @@ router.post('/analyze', upload.single('file'), async (req, res) => {
     };
 
     try {
-      db.prepare(`
-        INSERT INTO resume_analyses (id, user_id, ats_score, job_match_rate, file_name, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(crypto.randomUUID(), req.body.userId || 'demo-user', merged.atsScore, merged.jobMatchRate, req.file.originalname, new Date().toISOString(), new Date().toISOString());
+      const resumeUserId = req.body.userId || 'demo-user';
+      // 检查用户是否存在，防止外键约束失败
+      const userExists = db.prepare('SELECT id FROM users WHERE id = ?').get(resumeUserId);
+      if (userExists) {
+        db.prepare(`
+          INSERT INTO resume_analyses (id, user_id, ats_score, job_match_rate, file_name, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(crypto.randomUUID(), resumeUserId, merged.atsScore, merged.jobMatchRate, req.file.originalname, new Date().toISOString(), new Date().toISOString());
+      } else {
+        console.warn('[简历分析] 用户', resumeUserId, '在 users 表中不存在，跳过持久化');
+      }
     } catch (persistError) {
       console.error('[简历分析] persist error:', persistError?.message || persistError);
     }
