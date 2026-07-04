@@ -415,7 +415,7 @@ async function callDeepSeek(messages, options = {}) {
         messages,
         temperature: options.temperature ?? 0.7,
         max_tokens: options.max_tokens ?? 2000,
-        reasoning_effort: reasoningEffort,
+        ...(enableThinking ? { reasoning_effort: reasoningEffort } : {}),
         ...(options.tools ? { tools: options.tools } : {}),
         ...(options.tool_choice ? { tool_choice: options.tool_choice } : {}),
         extra_body: enableThinking ? { thinking: { type: 'enabled' } } : undefined
