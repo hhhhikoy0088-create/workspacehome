@@ -217,13 +217,18 @@ function getTodayKey(date = new Date()) {
 
 function recordDailyActivity(userId, source = 'open_app') {
   if (!userId) return;
-  const today = getTodayKey();
-  const existing = db.prepare('SELECT id FROM user_daily_activity WHERE user_id = ? AND activity_date = ?').get(userId, today);
-  if (!existing) {
-    db.prepare(`
-      INSERT INTO user_daily_activity (id, user_id, activity_date, source, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(createId(), userId, today, source, now(), now());
+  try {
+    const today = getTodayKey();
+    const existing = db.prepare('SELECT id FROM user_daily_activity WHERE user_id = ? AND activity_date = ?').get(userId, today);
+    if (!existing) {
+      db.prepare(`
+        INSERT INTO user_daily_activity (id, user_id, activity_date, source, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(createId(), userId, today, source, now(), now());
+    }
+  } catch (e) {
+    // FOREIGN KEY 约束失败（用户不在 users 表中）时静默忽略，不阻塞页面
+    console.warn('[recordDailyActivity] 写入失败（可能用户不存在）:', e.message);
   }
 }
 
@@ -518,14 +523,13 @@ ${JSON.stringify(summary, null, 2)}`;
 
     console.log('[ANALYZE-DATA] 开始调用 DeepSeek，行数:', rows.length, '列数:', summary.columns.length);
 
-    // 统一使用 callDeepSeek（与聊天、PPT 保持一致），并关闭 thinking 以减少 token 消耗
+    // deepseek-v4-pro 是推理模型，关闭 thinking 会导致 content 返回空
     const result = await callDeepSeek([
       { role: 'system', content: '只输出严格 JSON，不要解释。' },
       { role: 'user', content: prompt }
     ], {
       temperature: 0.2,
-      max_tokens: 2500,
-      enableThinking: false
+      max_tokens: 2500
     });
 
     const content = result?.choices?.[0]?.message?.content || '';
