@@ -402,6 +402,8 @@ async function callDeepSeek(messages, options = {}) {
         temperature: options.temperature ?? 0.7,
         max_tokens: options.max_tokens ?? 2000,
         reasoning_effort: reasoningEffort,
+        ...(options.tools ? { tools: options.tools } : {}),
+        ...(options.tool_choice ? { tool_choice: options.tool_choice } : {}),
         extra_body: enableThinking ? { thinking: { type: 'enabled' } } : undefined
       })
     });
@@ -2747,15 +2749,172 @@ app.get('/api/ppt/download/:fileId', (req, res) => {
   res.download(filePath);
 });
 
+// ── 工具定义 ──
+const CHAT_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'get_tasks',
+      description: '获取用户的任务列表，可按状态筛选。用户问"我的任务""今日任务""待办"时调用。',
+      parameters: {
+        type: 'object',
+        properties: {
+          status: { type: 'string', enum: ['pending', 'in_progress', 'completed'], description: '任务状态' },
+          limit: { type: 'number', description: '返回条数上限，默认20' }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_study_plans',
+      description: '获取用户的学习计划列表。用户问"学习计划""我的计划"时调用。',
+      parameters: {
+        type: 'object',
+        properties: {
+          status: { type: 'string', enum: ['active', 'completed', 'paused'], description: '计划状态' },
+          limit: { type: 'number', description: '返回条数上限，默认10' }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_learning_records',
+      description: '获取用户的学习记录和进度。用户问"学习状态""学习分析""学了什么"时调用。',
+      parameters: {
+        type: 'object',
+        properties: {
+          limit: { type: 'number', description: '返回条数上限，默认20' }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_knowledge_bases',
+      description: '获取用户的知识库列表。用户问"知识库""我的资料"时调用。',
+      parameters: {
+        type: 'object',
+        properties: {
+          limit: { type: 'number', description: '返回条数上限，默认10' }
+        }
+      }
+    }
+  }
+];
+
+// ── 工具执行器 ──
+function executeChatTool(name, args, userId) {
+  if (!userId) return { error: '用户未登录，无法查询数据' };
+  const limit = args.limit || 20;
+  switch (name) {
+    case 'get_tasks': {
+      let rows;
+      if (args.status) {
+        rows = db.prepare('SELECT * FROM tasks WHERE user_id = ? AND status = ? ORDER BY created_at DESC LIMIT ?').all(userId, args.status, limit);
+      } else {
+        rows = db.prepare('SELECT * FROM tasks WHERE user_id = ? ORDER BY created_at DESC LIMIT ?').all(userId, limit);
+      }
+      return {
+        total: rows.length,
+        counts_by_status: {
+          pending: db.prepare('SELECT COUNT(*) as c FROM tasks WHERE user_id = ? AND status = ?').get(userId, 'pending')?.c || 0,
+          in_progress: db.prepare('SELECT COUNT(*) as c FROM tasks WHERE user_id = ? AND status = ?').get(userId, 'in_progress')?.c || 0,
+          completed: db.prepare('SELECT COUNT(*) as c FROM tasks WHERE user_id = ? AND status = ?').get(userId, 'completed')?.c || 0
+        },
+        tasks: rows.map(r => ({
+          id: r.id, title: r.title, status: r.status, priority: r.priority,
+          due_date: r.due_date, source_type: r.source_type, created_at: r.created_at
+        }))
+      };
+    }
+    case 'get_study_plans': {
+      let rows;
+      if (args.status) {
+        rows = db.prepare('SELECT * FROM study_plans WHERE user_id = ? AND status = ? ORDER BY created_at DESC LIMIT ?').all(userId, args.status, limit);
+      } else {
+        rows = db.prepare('SELECT * FROM study_plans WHERE user_id = ? ORDER BY created_at DESC LIMIT ?').all(userId, limit);
+      }
+      return {
+        total: rows.length,
+        plans: rows.map(r => ({
+          id: r.id, title: r.title, status: r.status,
+          knowledge_base_id: r.knowledge_base_id, created_at: r.created_at
+        }))
+      };
+    }
+    case 'get_learning_records': {
+      const rows = db.prepare('SELECT * FROM learning_records WHERE user_id = ? ORDER BY created_at DESC LIMIT ?').all(userId, limit);
+      const total = db.prepare('SELECT COUNT(*) as c FROM learning_records WHERE user_id = ?').get(userId)?.c || 0;
+      const avgMastery = db.prepare('SELECT AVG(mastery) as avg FROM learning_records WHERE user_id = ?').get(userId)?.avg || 0;
+      return {
+        total,
+        average_mastery: Math.round(avgMastery * 10) / 10,
+        records: rows.map(r => ({
+          id: r.id, subject: r.subject, topic: r.topic,
+          mastery: r.mastery, note: r.note, created_at: r.created_at
+        }))
+      };
+    }
+    case 'get_knowledge_bases': {
+      const rows = db.prepare('SELECT kb.*, (SELECT COUNT(*) FROM knowledge_documents kd WHERE kd.knowledge_base_id = kb.id) as doc_count FROM knowledge_bases kb WHERE kb.user_id = ? ORDER BY kb.updated_at DESC LIMIT ?').all(userId, limit);
+      return {
+        total: rows.length,
+        knowledge_bases: rows.map(r => ({
+          id: r.id, name: r.name, description: r.description,
+          source_type: r.source_type, doc_count: r.doc_count, created_at: r.created_at
+        }))
+      };
+    }
+    default:
+      return { error: `Unknown tool: ${name}` };
+  }
+}
+
+// ── 意图识别：从用户消息中提取数据上下文 ──
+function buildIntentContext(message, userId) {
+  const msg = message.toLowerCase();
+  const snippets = [];
+
+  // 任务相关
+  if (/任务|待办|todo|task|今天要做/.test(msg)) {
+    const tasks = db.prepare('SELECT * FROM tasks WHERE user_id = ? ORDER BY created_at DESC LIMIT 20').all(userId);
+    if (tasks.length > 0) {
+      const pending = tasks.filter(t => t.status === 'pending');
+      const inProgress = tasks.filter(t => t.status === 'in_progress');
+      snippets.push(`【用户任务数据】共${tasks.length}条。待处理${pending.length}条，进行中${inProgress.length}条。`);
+      snippets.push(pending.slice(0, 8).map(t => `- [${t.priority}] ${t.title} (截止:${t.due_date || '未设'})`).join('\n'));
+    }
+  }
+
+  // 学习计划相关
+  if (/学习计划|学习路径|计划|plan|study/.test(msg)) {
+    const plans = db.prepare('SELECT * FROM study_plans WHERE user_id = ? ORDER BY updated_at DESC LIMIT 10').all(userId);
+    if (plans.length > 0) {
+      snippets.push(`【学习计划数据】共${plans.length}个计划。`);
+      snippets.push(plans.map(p => `- ${p.title} [${p.status}]`).join('\n'));
+    }
+  }
+
+  // 知识库相关
+  if (/知识库|资料|文档|知识|knowledge/.test(msg)) {
+    const kbs = db.prepare('SELECT kb.*, (SELECT COUNT(*) FROM knowledge_documents kd WHERE kd.knowledge_base_id = kb.id) as doc_count FROM knowledge_bases kb WHERE kb.user_id = ? ORDER BY kb.updated_at DESC LIMIT 10').all(userId);
+    if (kbs.length > 0) {
+      snippets.push(`【知识库数据】共${kbs.length}个知识库。`);
+      snippets.push(kbs.map(k => `- ${k.name}（${k.doc_count}个文档）`).join('\n'));
+    }
+  }
+
+  if (snippets.length === 0) return '';
+  return '\n\n===== 以下是用户的实际数据，请基于这些数据回答 =====\n' + snippets.join('\n\n');
+}
+
+// ── 主路由 ──
 app.post('/api/ai/chat', async (req, res) => {
-  console.log('===== CHAT ROUTE =====');
-  console.log(req.originalUrl);
-  console.log(req.body);
-  console.log('======================');
-
-  console.log('[1] Request');
-  console.log('Request Received');
-
   try {
     const { message } = req.body;
 
@@ -2765,49 +2924,71 @@ app.post('/api/ai/chat', async (req, res) => {
 
     const userId = req.body.userId || req.body.user_id || req.query?.userId || req.headers['x-user-id'] || req.user?.id || req.authUser?.id || '';
 
-    console.log('[2] Auth');
-    console.log('userId:', userId);
+    // 1. 意图识别：注入真实数据上下文
+    const intentContext = userId ? buildIntentContext(message, userId) : '';
+    const systemPrompt = '你是小W，一个学习办公助手，隶属于虾米Workspace平台。回答要简洁清晰，可以有条目但不啰嗦。如果用户的真实数据为空（比如没有任务、没有计划），如实告知用户当前没有相关数据，并给出建议。'
+      + intentContext;
 
-    console.log('[3] Knowledge');
-    const documentCount = userId ? db.prepare('SELECT COUNT(*) as count FROM knowledge_documents WHERE user_id = ?').get(userId)?.count ?? 0 : 0;
-    const chunkCount = userId ? db.prepare('SELECT COUNT(*) as count FROM knowledge_documents WHERE user_id = ?').get(userId)?.count ?? 0 : 0;
-    console.log('Knowledge Search');
-    console.log(userId);
-    console.log(documentCount);
-    console.log(chunkCount);
-    const results = [];
-    console.log('results', results);
-
-    console.log('[4] Call LLM');
-    const result = await callDeepSeek([
-      { role: 'system', content: '你是一个中文学习办公助手，回答要简洁清晰。' },
+    // 2. Function Calling 循环（最多 3 轮）
+    const messages = [
+      { role: 'system', content: systemPrompt },
       { role: 'user', content: message }
-    ], {
-      temperature: 0.7,
-      max_tokens: 1500
-    });
+    ];
 
-    console.log('[5] LLM Success');
-    const content = result?.choices?.[0]?.message?.content || '';
+    let finalReply = '';
 
-    console.log('[6] Save Message');
-    const chatId = createId();
-    console.log('chatId:', chatId);
-    console.log('userId:', userId);
-    console.log('message:', message);
-    if (userId) {
-      db.prepare(`
-        INSERT INTO chat_messages (id, user_id, role, content, created_at)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(chatId, userId, 'assistant', content, now());
+    for (let round = 0; round < 3; round++) {
+      const result = await callDeepSeek(messages, {
+        temperature: 0.7,
+        max_tokens: 2000,
+        enableThinking: false,
+        tools: CHAT_TOOLS,
+        tool_choice: 'auto'
+      });
+
+      const choice = result?.choices?.[0];
+      if (!choice) { finalReply = 'AI 返回为空，请重试。'; break; }
+
+      const msg = choice.message;
+
+      // 如果 AI 要调用工具
+      if (msg.tool_calls && msg.tool_calls.length > 0) {
+        // 构建 assistant 消息（content 可能为 null，需兼容处理）
+        const assistantMsg = { role: 'assistant', tool_calls: msg.tool_calls };
+        if (msg.content) assistantMsg.content = msg.content;
+        messages.push(assistantMsg);
+
+        // 执行每个工具调用
+        for (const tc of msg.tool_calls) {
+          let toolResult;
+          try {
+            const args = JSON.parse(tc.function.arguments);
+            toolResult = executeChatTool(tc.function.name, args, userId);
+          } catch (e) {
+            toolResult = { error: e.message };
+          }
+          messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(toolResult) });
+        }
+        continue; // 继续下一轮
+      }
+
+      // 正常文本回复
+      finalReply = msg.content || '';
+      break;
     }
 
-    console.log('[7] Return Response');
-    res.json({ success: true, data: { reply: content } });
+    if (!finalReply) finalReply = '抱歉，我暂时无法处理这个请求，请换个方式表达试试？';
+
+    // 保存 AI 回复到数据库
+    if (userId) {
+      const chatId = createId();
+      db.prepare('INSERT INTO chat_messages (id, user_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)').run(chatId, userId, 'assistant', finalReply, now());
+    }
+
+    res.json({ success: true, data: { reply: finalReply } });
   } catch (error) {
     console.error('CHAT ERROR');
     console.error(error);
-    console.error(error.stack);
     return res.status(500).json({
       success: false,
       message: error.message,
