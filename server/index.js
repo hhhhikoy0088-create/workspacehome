@@ -2759,7 +2759,7 @@ const CHAT_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          status: { type: 'string', enum: ['pending', 'in_progress', 'completed'], description: '任务状态' },
+          status: { type: 'string', enum: ['pending', 'active', 'in_progress', 'completed'], description: '任务状态。active 和 in_progress 都表示进行中（产品里的“今日任务”），pending 表示待办。' },
           limit: { type: 'number', description: '返回条数上限，默认20' }
         }
       }
@@ -2814,17 +2814,22 @@ function executeChatTool(name, args, userId) {
   switch (name) {
     case 'get_tasks': {
       let rows;
-      if (args.status) {
-        rows = db.prepare('SELECT * FROM tasks WHERE user_id = ? AND status = ? ORDER BY created_at DESC LIMIT ?').all(userId, args.status, limit);
+      // 产品语义：active = in_progress = 今日任务/进行中
+      const status = args.status ? String(args.status).toLowerCase() : '';
+      if (status === 'active' || status === 'in_progress') {
+        rows = db.prepare("SELECT * FROM tasks WHERE user_id = ? AND lower(status) IN ('active', 'in_progress') ORDER BY created_at DESC LIMIT ?").all(userId, limit);
+      } else if (status) {
+        rows = db.prepare('SELECT * FROM tasks WHERE user_id = ? AND lower(status) = ? ORDER BY created_at DESC LIMIT ?').all(userId, status, limit);
       } else {
         rows = db.prepare('SELECT * FROM tasks WHERE user_id = ? ORDER BY created_at DESC LIMIT ?').all(userId, limit);
       }
       return {
         total: rows.length,
         counts_by_status: {
-          pending: db.prepare('SELECT COUNT(*) as c FROM tasks WHERE user_id = ? AND status = ?').get(userId, 'pending')?.c || 0,
-          in_progress: db.prepare('SELECT COUNT(*) as c FROM tasks WHERE user_id = ? AND status = ?').get(userId, 'in_progress')?.c || 0,
-          completed: db.prepare('SELECT COUNT(*) as c FROM tasks WHERE user_id = ? AND status = ?').get(userId, 'completed')?.c || 0
+          active: db.prepare("SELECT COUNT(*) as c FROM tasks WHERE user_id = ? AND lower(status) = 'active'").get(userId)?.c || 0,
+          in_progress: db.prepare("SELECT COUNT(*) as c FROM tasks WHERE user_id = ? AND lower(status) = 'in_progress'").get(userId)?.c || 0,
+          pending: db.prepare("SELECT COUNT(*) as c FROM tasks WHERE user_id = ? AND lower(status) = 'pending'").get(userId)?.c || 0,
+          completed: db.prepare("SELECT COUNT(*) as c FROM tasks WHERE user_id = ? AND lower(status) IN ('completed', 'done')").get(userId)?.c || 0
         },
         tasks: rows.map(r => ({
           id: r.id, title: r.title, status: r.status, priority: r.priority,
@@ -2880,14 +2885,16 @@ function buildIntentContext(message, userId) {
   const msg = message.toLowerCase();
   const snippets = [];
 
-  // 任务相关
-  if (/任务|待办|todo|task|今天要做/.test(msg)) {
+  // 任务相关 — 产品语义：active=进行中(今日任务), pending=待办, completed=已完成
+  if (/任务|待办|todo|task|今天要做|今日/.test(msg)) {
     const tasks = db.prepare('SELECT * FROM tasks WHERE user_id = ? ORDER BY created_at DESC LIMIT 20').all(userId);
     if (tasks.length > 0) {
-      const pending = tasks.filter(t => t.status === 'pending');
-      const inProgress = tasks.filter(t => t.status === 'in_progress');
-      snippets.push(`【用户任务数据】共${tasks.length}条。待处理${pending.length}条，进行中${inProgress.length}条。`);
-      snippets.push(pending.slice(0, 8).map(t => `- [${t.priority}] ${t.title} (截止:${t.due_date || '未设'})`).join('\n'));
+      const active = tasks.filter(t => String(t.status).toLowerCase() === 'active');
+      const pending = tasks.filter(t => String(t.status).toLowerCase() === 'pending');
+      const completed = tasks.filter(t => String(t.status).toLowerCase() === 'completed' || String(t.status).toLowerCase() === 'done');
+      snippets.push(`【用户任务数据】共${tasks.length}条。今日任务(进行中)${active.length}条，待办${pending.length}条，已完成${completed.length}条。`);
+      snippets.push(active.slice(0, 8).map(t => `- [进行中][${t.priority || '普通'}] ${t.title} (截止:${t.due_date || '未设'})`).join('\n'));
+      if (pending.length > 0) snippets.push(pending.slice(0, 5).map(t => `- [待办][${t.priority || '普通'}] ${t.title} (截止:${t.due_date || '未设'})`).join('\n'));
     }
   }
 
