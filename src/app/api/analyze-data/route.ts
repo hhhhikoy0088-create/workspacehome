@@ -38,7 +38,12 @@ export async function POST(req: Request) {
     const rows = Array.isArray(body?.rows) ? normalizeRows(body.rows) : [];
 
     if (!rows.length) {
-      return NextResponse.json({ message: 'rows is required' }, { status: 400 });
+      return NextResponse.json({ success: false, message: 'rows is required' }, { status: 400 });
+    }
+
+    const apiKey = process.env.DEEPSEEK_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json({ success: false, message: 'DEEPSEEK_API_KEY 未配置' }, { status: 500 });
     }
 
     const summary = buildDatasetSummary(rows);
@@ -70,7 +75,7 @@ export async function POST(req: Request) {
 ${JSON.stringify(summary, null, 2)}`;
 
     const completion = await getClient().chat.completions.create({
-      model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
+      model: process.env.DEEPSEEK_MODEL || 'deepseek-v4-pro',
       messages: [
         { role: 'system', content: '只输出严格 JSON，不要解释。' },
         { role: 'user', content: prompt }
@@ -80,7 +85,19 @@ ${JSON.stringify(summary, null, 2)}`;
     });
 
     const content = completion.choices[0]?.message?.content || '';
-    const parsed = JSON.parse(content.match(/\{[\s\S]*\}/)?.[0] || '{}');
+    if (!content.trim()) {
+      return NextResponse.json({ success: false, message: 'AI 返回空内容' }, { status: 502 });
+    }
+
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return NextResponse.json({
+        success: false,
+        message: 'AI 返回格式异常',
+        rawContent: content.slice(0, 200)
+      }, { status: 502 });
+    }
+    const parsed = JSON.parse(jsonMatch[0]);
 
     return NextResponse.json({
       success: true,
@@ -89,8 +106,10 @@ ${JSON.stringify(summary, null, 2)}`;
       rows: summary.sampleRows
     });
   } catch (error: any) {
+    console.error('[ANALYZE-DATA ERROR]', error?.message || error);
+    // Ensure we always return JSON, never let Next.js return an HTML error page
     return NextResponse.json(
-      { success: false, message: error?.message || '分析失败' },
+      { success: false, message: error?.message || '分析服务暂时不可用' },
       { status: 500 }
     );
   }
