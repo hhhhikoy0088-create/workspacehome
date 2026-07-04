@@ -42,7 +42,10 @@ function initDatabase() {
       password_hash TEXT,
       avatar TEXT,
       role TEXT DEFAULT 'user',
+      goal TEXT,
       goal_target_date TEXT,
+      identity TEXT,
+      profession TEXT,
       nickname TEXT,
       school TEXT,
       region TEXT,
@@ -63,6 +66,15 @@ function initDatabase() {
   }
   if (!userColumns.includes('region')) {
     db.exec(`ALTER TABLE users ADD COLUMN region TEXT`);
+  }
+  if (!userColumns.includes('identity')) {
+    db.exec(`ALTER TABLE users ADD COLUMN identity TEXT`);
+  }
+  if (!userColumns.includes('profession')) {
+    db.exec(`ALTER TABLE users ADD COLUMN profession TEXT`);
+  }
+  if (!userColumns.includes('goal')) {
+    db.exec(`ALTER TABLE users ADD COLUMN goal TEXT`);
   }
 
   const knowledgeDocumentColumns = db.prepare(`PRAGMA table_info(knowledge_documents)`).all().map((row) => row.name);
@@ -186,6 +198,15 @@ function initDatabase() {
       priority TEXT DEFAULT 'medium',
       due_date TEXT,
       source TEXT,
+      task_order INTEGER DEFAULT 0,
+      source_chunk_id TEXT,
+      file_name TEXT,
+      knowledge_point_id TEXT,
+      knowledge_point_title TEXT,
+      source_type TEXT DEFAULT 'plan',
+      query_text TEXT,
+      completed_at TEXT,
+      rescheduled_at TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -197,6 +218,12 @@ function initDatabase() {
       title TEXT NOT NULL,
       content TEXT NOT NULL,
       status TEXT DEFAULT 'active',
+      knowledge_base_id TEXT,
+      knowledge_points_json TEXT,
+      learning_route_json TEXT,
+      daily_plan_json TEXT,
+      review_plan_json TEXT,
+      exercises_json TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
