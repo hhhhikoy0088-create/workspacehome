@@ -7,7 +7,7 @@ import { chatApi, createChatMessageApi, getChatMessagesApi } from '@/api';
 import { useAuthStore } from '@/components/auth-provider';
 
 const suggestions = ['打开学习计划', '查询积分换元法', '查看今日任务', '分析我的学习状态'];
-const initialAssistantMessage = '你好，我是小龙虾 AI，可以帮你学习、整理资料和规划任务。';
+const initialAssistantMessage = '你好，我是小w，今天想学习什么？';
 
 type Message = { role: 'user' | 'assistant'; content: string };
 
@@ -122,7 +122,6 @@ function ChatPageContent() {
               <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-violet-500 text-2xl font-bold text-white shadow-[0_4px_12px_rgba(99,102,241,0.3)]">W</div>
               <div>
                 <p className="text-lg font-semibold text-slate-800">workspace</p>
-                <p className="text-sm text-slate-400">你好，我是小W，有什么可以帮助你。</p>
               </div>
             </div>
           </div>
