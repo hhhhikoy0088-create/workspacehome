@@ -57,13 +57,13 @@ export function useLearningTracker(options?: Options) {
       });
       try {
         const ok = navigator.sendBeacon(
-          `${process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001/api'}/learning-records`,
+          `/api/learning-records`,
           new Blob([payload], { type: 'application/json' })
         );
         // sendBeacon 不可用时回退到 fetch（keepalive 模式）
         if (!ok) {
           fetch(
-            `${process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001/api'}/learning-records`,
+            `/api/learning-records`,
             { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload, keepalive: true }
           ).catch(() => {});
         }

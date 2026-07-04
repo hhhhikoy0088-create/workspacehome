@@ -1,6 +1,7 @@
 import { getAuthHeaders } from '@/lib/auth-session';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001/api';
+// 使用相对路径 /api，让 Next.js rewrite/fallback 代理到后端，避免跨域和端口问题
+const API_BASE = '/api';
 
 const request: any = async function request(path: string, options: RequestInit = {}) {
   const { token, userId } = getAuthHeaders();

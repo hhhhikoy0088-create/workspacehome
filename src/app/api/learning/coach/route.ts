@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001/api';
+const BACKEND = (process.env.BACKEND_URL || 'http://127.0.0.1:3001').replace(/\/api\/ping$/, '').replace(/\/api$/, '');
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const response = await fetch(`${API_BASE}/learning/coach`, {
+    const response = await fetch(`${BACKEND}/api/learning/coach`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)

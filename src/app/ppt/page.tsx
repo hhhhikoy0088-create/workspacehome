@@ -111,7 +111,7 @@ export default function PptPage() {
     }
   };
 
-  const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001/api';
+  const API_BASE = '/api';
 
   const downloadBinary = async (path: string, payload: any, name: string) => {
     const response = await fetch(`${API_BASE}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });

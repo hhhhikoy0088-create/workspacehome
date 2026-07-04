@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:3001/api';
+// 服务端 fetch 用 BACKEND_URL，去掉 /api/ping 后缀
+const BACKEND = (process.env.BACKEND_URL || 'http://127.0.0.1:3001').replace(/\/api\/ping$/, '').replace(/\/api$/, '');
 
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const userId = searchParams.get('userId') || 'demo-user';
-    const response = await fetch(`${API_BASE}/dashboard?userId=${encodeURIComponent(userId)}`);
+    const response = await fetch(`${BACKEND}/api/dashboard?userId=${encodeURIComponent(userId)}`);
     const text = await response.text();
     const data = text ? JSON.parse(text) : null;
     return NextResponse.json(data, { status: response.status });
