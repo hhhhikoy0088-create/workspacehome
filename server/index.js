@@ -177,20 +177,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// 全局错误处理中间件：确保任何未捕获的异常都返回 JSON，而不是 Express 默认的 HTML
-app.use((err, req, res, next) => {
-  console.error('[GLOBAL ERROR]', err?.message || err);
-  console.error('[GLOBAL ERROR STACK]', err?.stack || '');
-  if (res.headersSent) {
-    return next(err);
-  }
-  res.status(500).json({
-    success: false,
-    message: err?.message || '服务器内部错误',
-    path: req.originalUrl
-  });
-});
-
 function createId() {
   return crypto.randomUUID();
 }
@@ -3038,6 +3024,22 @@ app.post('/api/ai/chat', async (req, res) => {
       stack: error.stack
     });
   }
+});
+
+/* =========================================
+   全局错误处理中间件（必须放在所有路由之后）
+========================================= */
+app.use((err, req, res, next) => {
+  console.error('[GLOBAL ERROR]', err?.message || err);
+  console.error('[GLOBAL ERROR STACK]', err?.stack || '');
+  if (res.headersSent) {
+    return next(err);
+  }
+  res.status(500).json({
+    success: false,
+    message: err?.message || '服务器内部错误',
+    path: req.originalUrl
+  });
 });
 
 /* =========================================
