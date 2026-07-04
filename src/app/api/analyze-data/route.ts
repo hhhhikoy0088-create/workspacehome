@@ -81,7 +81,12 @@ ${JSON.stringify(summary, null, 2)}`;
         { role: 'user', content: prompt }
       ],
       temperature: 0.2,
-      max_tokens: 2000
+      max_tokens: 2500,
+      // deepseek-v4-pro 推理模型参数
+      // @ts-expect-error reasoning_effort 是 deepseek 特有参数
+      reasoning_effort: 'high',
+      // @ts-expect-error extra_body 是 openai SDK 支持的扩展字段
+      extra_body: { thinking: { type: 'enabled' } },
     });
 
     const content = completion.choices[0]?.message?.content || '';

@@ -509,13 +509,15 @@ ${JSON.stringify(summary, null, 2)}`;
 
     console.log('[ANALYZE-DATA] 开始调用 DeepSeek，行数:', rows.length, '列数:', summary.columns.length);
 
-    // deepseek-v4-pro 是推理模型，关闭 thinking 会导致 content 返回空
+    // deepseek-v4-pro 是推理模型，必须保持 thinking 开启，否则返回空内容
+    // 超时设 180s 配合前端 API Route 的 AbortController 超时
     const result = await callDeepSeek([
       { role: 'system', content: '只输出严格 JSON，不要解释。' },
       { role: 'user', content: prompt }
     ], {
       temperature: 0.2,
-      max_tokens: 2500
+      max_tokens: 2500,
+      timeoutMs: 180000
     });
 
     const content = result?.choices?.[0]?.message?.content || '';
@@ -2517,6 +2519,17 @@ app.post('/api/chat/messages', (req, res) => {
     console.log('userId:', userId);
     console.log('message:', content);
 
+    // 检查用户是否存在于 users 表（防止 FOREIGN KEY constraint failed）
+    const userExists = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+    if (!userExists) {
+      console.warn(`[CHAT] 用户 ${userId} 在 users 表中不存在，拒绝保存消息`);
+      return res.status(401).json({
+        success: false,
+        message: '用户不存在或登录已过期，请重新登录',
+        code: 'USER_NOT_FOUND'
+      });
+    }
+
     const id = createId();
     db.prepare(`
       INSERT INTO chat_messages (id, user_id, role, content, created_at)
@@ -3008,10 +3021,15 @@ app.post('/api/ai/chat', async (req, res) => {
 
     if (!finalReply) finalReply = '抱歉，我暂时无法处理这个请求，请换个方式表达试试？';
 
-    // 保存 AI 回复到数据库
+    // 保存 AI 回复到数据库（检查用户是否存在，防止外键约束失败）
     if (userId) {
-      const chatId = createId();
-      db.prepare('INSERT INTO chat_messages (id, user_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)').run(chatId, userId, 'assistant', finalReply, now());
+      const aiChatUserExists = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+      if (aiChatUserExists) {
+        const chatId = createId();
+        db.prepare('INSERT INTO chat_messages (id, user_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)').run(chatId, userId, 'assistant', finalReply, now());
+      } else {
+        console.warn(`[AI CHAT] 用户 ${userId} 在 users 表中不存在，跳过保存消息`);
+      }
     }
 
     res.json({ success: true, data: { reply: finalReply } });
