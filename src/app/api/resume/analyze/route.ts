@@ -9,10 +9,9 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
 
     const backendUrl = (process.env.BACKEND_URL || 'http://127.0.0.1:3001').replace(/\/+$/, '');
-    // 兼容 BACKEND_URL 已包含 /api 前缀的情况（如 http://127.0.0.1:3001/api/ping）
-    const url = backendUrl.endsWith('/api/ping') || backendUrl.endsWith('/api')
-      ? `${backendUrl}/resume/analyze`
-      : `${backendUrl}/api/resume/analyze`;
+    // 去掉 BACKEND_URL 的 /api/ping 或 /api 后缀，统一拼 /api/resume/analyze
+    const baseUrl = backendUrl.replace(/\/api\/ping$/, '').replace(/\/api$/, '');
+    const url = `${baseUrl}/api/resume/analyze`;
 
     const file = formData.get('file') as File | null;
     if (!file) {
