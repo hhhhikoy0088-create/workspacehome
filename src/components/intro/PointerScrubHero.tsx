@@ -3,8 +3,21 @@
 import { useEffect, useRef } from "react";
 
 const SEEK_INTERVAL_MS = 1000 / 30;
-const INITIAL_FRAME_TIME = 0.02;
 const SEEK_EPSILON_SECONDS = 1 / 120;
+
+// The hero clip is a symmetric sway, measured frame by frame from the source file: the
+// subject sits at x≈430/640 at the start, drifts LEFT to its leftmost x≈396 at ≈2.67s
+// (66% of the clip), then swings back RIGHT to x≈437 at the end (4.0s, 99%).
+//
+// A linear pointer -> time map across the whole clip therefore reverses direction halfway
+// through the gesture, which reads as "the subject moves against my pointer". Mapping the
+// pointer onto the clip's final monotonic stretch instead makes the subject's on-screen
+// offset track the pointer one to one: pointer left -> subject left, pointer right ->
+// subject right, for the entire gesture.
+const FOLLOW_START_PROGRESS = 0.66;
+const FOLLOW_END_PROGRESS = 0.99;
+// No pointer interaction yet: rest in the middle of that stretch.
+const INITIAL_POINTER_PROGRESS = 0.5;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -12,6 +25,11 @@ function clamp(value: number, min: number, max: number) {
 
 function isSeekableDuration(duration: number) {
   return Number.isFinite(duration) && duration > 0;
+}
+
+function timeForPointerProgress(pointerProgress: number, duration: number) {
+  const progress = FOLLOW_START_PROGRESS + clamp(pointerProgress, 0, 1) * (FOLLOW_END_PROGRESS - FOLLOW_START_PROGRESS);
+  return clamp(progress * duration, 0, duration);
 }
 
 export function PointerScrubHero() {
@@ -27,7 +45,7 @@ export function PointerScrubHero() {
     let isPointerActive = false;
     let activePointerId: number | null = null;
     let isSeeking = false;
-    let targetTime = INITIAL_FRAME_TIME;
+    let targetTime = 0;
     let rafId: number | null = null;
     let retryTimer: number | null = null;
     let lastSeekAt = 0;
@@ -85,10 +103,10 @@ export function PointerScrubHero() {
       const rect = section.getBoundingClientRect();
       if (rect.width <= 0) return;
 
-      // The clip is authored so that playing it forward pushes the subject to the
-      // left, so the pointer position is mirrored to keep the motion following it.
-      const progress = clamp((rect.right - clientX) / rect.width, 0, 1);
-      targetTime = progress * video.duration;
+      // Pointer at the left edge shows the subject at its leftmost, and at the right
+      // edge at its rightmost, so every pointer move drags the subject the same way.
+      const pointerProgress = clamp((clientX - rect.left) / rect.width, 0, 1);
+      targetTime = timeForPointerProgress(pointerProgress, video.duration);
       scheduleSeek();
     };
 
@@ -103,7 +121,7 @@ export function PointerScrubHero() {
 
     const handleLoadedMetadata = () => {
       if (!isSeekableDuration(video.duration)) return;
-      targetTime = Math.min(INITIAL_FRAME_TIME, video.duration);
+      targetTime = timeForPointerProgress(INITIAL_POINTER_PROGRESS, video.duration);
       video.pause();
       video.currentTime = targetTime;
     };
