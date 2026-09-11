@@ -2,13 +2,13 @@
 
 import { useEffect } from "react";
 
-// Clicking anywhere on the intro jumps straight to the target screen; real drags
-// (the first screen is pointer-scrubbed) and interactive controls are ignored.
+// Clicking anywhere advances the intro; real drags (the first screen is pointer-scrubbed)
+// and interactive controls are ignored.
 const DRAG_THRESHOLD_PX = 8;
 const MAX_CLICK_DURATION_MS = 700;
 const IGNORED_SELECTOR = "a, button, input, textarea, select, label, [data-click-advance='ignore']";
 
-export function ClickToAdvance({ targetSelector }: { targetSelector: string }) {
+export function ClickToAdvance({ onAdvance }: { onAdvance: () => void }) {
   useEffect(() => {
     let downX = 0;
     let downY = 0;
@@ -36,10 +36,7 @@ export function ClickToAdvance({ targetSelector }: { targetSelector: string }) {
       const origin = event.target;
       if (origin instanceof Element && origin.closest(IGNORED_SELECTOR)) return;
 
-      const target = document.querySelector<HTMLElement>(targetSelector);
-      if (!target) return;
-
-      window.scrollTo({ top: target.getBoundingClientRect().top + window.scrollY });
+      onAdvance();
     };
 
     window.addEventListener("pointerdown", handlePointerDown, { passive: true });
@@ -49,7 +46,7 @@ export function ClickToAdvance({ targetSelector }: { targetSelector: string }) {
       window.removeEventListener("pointerdown", handlePointerDown);
       window.removeEventListener("click", handleClick);
     };
-  }, [targetSelector]);
+  }, [onAdvance]);
 
   return null;
 }
