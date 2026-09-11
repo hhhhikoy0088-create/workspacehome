@@ -241,3 +241,103 @@ body {
       inset 0 1px 0 rgba(255, 255, 255, 0.8);
   }
 }
+
+
+/* ------------------------------------------------------------------ *
+ * Login intro                                                         *
+ * Screen 1 is pointer-scrubbed, screens 2-3 are scrubbed by the real   *
+ * page scroll (sticky + long scroll ranges), then hand off to the      *
+ * /auth/login route. Only used by the intro on the home page.          *
+ * ------------------------------------------------------------------ */
+
+.intro-root {
+  background: #101215;
+}
+
+/* Final-frame handoff: the clip ends on the login screen itself, so the intro
+   dissolves through the login page's own light surface before the route changes. */
+.intro-root__handoff-wash {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  background: rgb(248 250 252);
+  opacity: 0;
+  transition: opacity 260ms ease;
+}
+
+.intro-root--handoff .intro-root__handoff-wash { opacity: 1; }
+
+.scrub-hero {
+  position: relative;
+  display: grid;
+  min-height: 100dvh;
+  overflow: hidden;
+  isolation: isolate;
+  cursor: ew-resize;
+  touch-action: pan-y;
+  background: #151719;
+}
+
+.scrub-hero__video,
+.scrub-hero__scrim { position: absolute; inset: 0; width: 100%; height: 100%; }
+.scrub-hero__video { object-fit: cover; pointer-events: none; }
+.scrub-hero__scrim { background: linear-gradient(90deg, rgb(8 10 12 / 0.72), rgb(8 10 12 / 0.18) 60%, rgb(8 10 12 / 0.4)); }
+
+.scrub-hero__content {
+  position: relative;
+  z-index: 1;
+  align-self: end;
+  width: min(620px, calc(100% - 48px));
+  margin: 0 24px clamp(80px, 11vh, 128px);
+}
+.scrub-hero__eyebrow { margin: 0 0 16px; color: #a5b4fc; font-size: 12px; font-weight: 700; letter-spacing: 0.14em; }
+.scrub-hero h1 { max-width: 10ch; margin: 0; font-size: clamp(42px, 6vw, 82px); line-height: 1.04; letter-spacing: -0.055em; }
+.scrub-hero__content > p:last-child { margin: 20px 0 0; color: rgb(248 250 252 / 0.8); font-size: 16px; }
+.scrub-hero__hint { position: absolute; z-index: 1; right: 28px; bottom: 34px; display: flex; gap: 6px; }
+.scrub-hero__hint span { width: 32px; height: 2px; background: rgb(255 255 255 / 0.45); }
+
+.scroll-video-section {
+  --scroll-progress: 0;
+  min-height: 340dvh;
+  background: #101215;
+}
+.scroll-video-section__sticky {
+  position: sticky;
+  top: 0;
+  display: grid;
+  min-height: 100dvh;
+  overflow: hidden;
+  isolation: isolate;
+  background: #151719;
+}
+.scroll-video-section__video,
+.scroll-video-section__scrim { position: absolute; inset: 0; width: 100%; height: 100%; }
+.scroll-video-section__video { object-fit: cover; pointer-events: none; }
+.scroll-video-section__scrim { background: linear-gradient(90deg, rgb(8 10 12 / 0.68), rgb(8 10 12 / 0.08) 65%, rgb(8 10 12 / 0.38)); }
+.scroll-video-section__content {
+  position: relative;
+  z-index: 1;
+  align-self: end;
+  width: min(560px, calc(100% - 48px));
+  margin: 0 24px clamp(80px, 11vh, 128px);
+  opacity: var(--headline-visibility);
+  transform: translateY(var(--headline-offset));
+}
+.scroll-video-section__content p { margin: 0 0 16px; color: #a5b4fc; font-size: 12px; font-weight: 700; letter-spacing: 0.14em; }
+.scroll-video-section__content h2 { max-width: 10ch; margin: 0; font-size: clamp(40px, 5.4vw, 72px); line-height: 1.04; letter-spacing: -0.055em; }
+.scroll-video-section__content span { display: block; margin-top: 20px; color: rgb(248 250 252 / 0.8); font-size: 16px; opacity: var(--copy-visibility); }
+
+/* Screen 3 pushes the camera into the login screen, so its frames stay bright and
+   only need a light left-hand scrim for the copy. */
+.scroll-video-section--focus .scroll-video-section__scrim {
+  background: linear-gradient(90deg, rgb(8 10 12 / 0.42), rgb(8 10 12 / 0.02) 55%, rgb(8 10 12 / 0.12));
+}
+
+@media (max-width: 700px) {
+  .scrub-hero__content { width: calc(100% - 40px); margin: 0 20px 76px; }
+  .scrub-hero h1 { font-size: clamp(40px, 12vw, 58px); }
+  .scrub-hero__hint { right: 20px; bottom: 28px; }
+  .scroll-video-section__content { width: calc(100% - 40px); margin: 0 20px 76px; }
+  .scroll-video-section__content h2 { font-size: clamp(40px, 12vw, 58px); }
+}

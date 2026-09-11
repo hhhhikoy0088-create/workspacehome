@@ -47,6 +47,9 @@ RUN cd server && npm install --legacy-peer-deps
 COPY --from=frontend-builder /app/.next/standalone ./
 COPY --from=frontend-builder /app/.next/static ./.next/static
 
+# Copy public/ assets (login intro videos + posters) served by the standalone server
+COPY --from=frontend-builder /app/public ./public
+
 # Copy server code
 COPY server/ ./server/
 COPY ppt-engine/ ./ppt-engine/

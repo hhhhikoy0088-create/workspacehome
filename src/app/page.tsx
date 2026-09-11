@@ -1,5 +1,5 @@
-import { redirect } from 'next/navigation';
+import { IntroExperience } from '@/components/intro/IntroExperience';
 
 export default function Home() {
-  redirect('/dashboard');
+  return <IntroExperience />;
 }
