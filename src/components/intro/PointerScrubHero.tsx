@@ -5,17 +5,19 @@ import { useEffect, useRef } from "react";
 const SEEK_INTERVAL_MS = 1000 / 30;
 const SEEK_EPSILON_SECONDS = 1 / 120;
 
-// The hero clip is a symmetric sway, measured frame by frame from the source file: the
-// subject sits at x≈430/640 at the start, drifts LEFT to its leftmost x≈396 at ≈2.67s
-// (66% of the clip), then swings back RIGHT to x≈437 at the end (4.0s, 99%).
+// Measured frame by frame from the source clip (1276x720, 24 fps, 97 frames). It is a
+// symmetric sway; head centre x as a share of frame width:
+//   t=0.00s 68.2%   t=1.29s 68.6% (rightmost)   t=2.79s 62.2% (leftmost)   t=3.96s 68.2%
+// A pointer -> whole-clip time map therefore reverses direction halfway through the
+// gesture, which reads as "the subject moves against my pointer".
 //
-// A linear pointer -> time map across the whole clip therefore reverses direction halfway
-// through the gesture, which reads as "the subject moves against my pointer". Mapping the
-// pointer onto the clip's final monotonic stretch instead makes the subject's on-screen
-// offset track the pointer one to one: pointer left -> subject left, pointer right ->
-// subject right, for the entire gesture.
-const FOLLOW_START_PROGRESS = 0.66;
-const FOLLOW_END_PROGRESS = 0.99;
+// The pointer is mapped onto the single monotonic stretch t=1.29s..2.79s (82 px of
+// travel plus a matching head rotation). In that stretch the subject is furthest RIGHT at
+// 1.29s and furthest LEFT at 2.79s, so the mapping is reversed on purpose: pointer right
+// -> 1.29s, pointer left -> 2.79s. The subject then travels right and turns right as the
+// pointer moves right, for the whole gesture.
+const FOLLOW_RIGHT_PROGRESS = 0.32;
+const FOLLOW_LEFT_PROGRESS = 0.69;
 // No pointer interaction yet: rest in the middle of that stretch.
 const INITIAL_POINTER_PROGRESS = 0.5;
 
@@ -28,7 +30,7 @@ function isSeekableDuration(duration: number) {
 }
 
 function timeForPointerProgress(pointerProgress: number, duration: number) {
-  const progress = FOLLOW_START_PROGRESS + clamp(pointerProgress, 0, 1) * (FOLLOW_END_PROGRESS - FOLLOW_START_PROGRESS);
+  const progress = FOLLOW_LEFT_PROGRESS - clamp(pointerProgress, 0, 1) * (FOLLOW_LEFT_PROGRESS - FOLLOW_RIGHT_PROGRESS);
   return clamp(progress * duration, 0, duration);
 }
 
