@@ -138,7 +138,7 @@ export function IntroExperience() {
       <PointerScrubHero />
       <ScrollScrubVideoSection
         videoSrc="/media/login-scroll.mp4"
-        poster="/media/login-scroll-poster.svg"
+        poster="/media/login-scroll-poster.jpg"
         label="滚动控制视频章节"
       >
         <p>一切井然有序</p>

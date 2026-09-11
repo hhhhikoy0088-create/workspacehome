@@ -223,7 +223,7 @@ export function PointerScrubHero() {
         muted
         playsInline
         preload="auto"
-        poster="/media/login-hero-poster.svg"
+        poster="/media/login-hero-poster.jpg"
         aria-hidden="true"
       >
         <source src="/media/login-hero.mp4" type="video/mp4" />
